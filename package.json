@@ -1,0 +1,43 @@
+{
+  "name": "scau-know",
+  "version": "1.0.0",
+  "private": true,
+  "description": "「华农知道」SCAU Know — 聚合华南农业大学公开活动、招募、教务与校园通知",
+  "scripts": {
+    "dev": "next dev -p 3210",
+    "build": "next build",
+    "start": "next start -p 3210",
+    "lint": "next lint",
+    "setup:wemp": "node scripts/setup-wemp.mjs",
+    "crawl": "tsx scripts/crawl.mjs",
+    "daemon": "tsx scripts/cron-daemon.mjs",
+    "enrich": "tsx scripts/enrich-ai.mjs",
+    "export:data": "tsx scripts/export-static-data.mjs",
+    "optimize:thumbs": "node scripts/optimize-thumbs.mjs",
+    "reparse:attachments": "tsx scripts/reparse-attachments.mjs",
+    "build:static": "node scripts/build-static.mjs",
+    "publish:static": "tsx scripts/publish-static.mjs"
+  },
+  "dependencies": {
+    "jszip": "^3.10.2",
+    "lucide-react": "^0.469.0",
+    "mammoth": "^1.13.0",
+    "next": "15.1.6",
+    "node-unrar-js": "^2.0.2",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "sharp": "^0.35.5",
+    "unpdf": "^2.2.1",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.3"
+  }
+}

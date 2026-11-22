@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#05945A"/>
+      <stop offset="100%" stop-color="#00663D"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <g transform="translate(32 32)">
+    <path d="M0 -3 C-4.8 -6.6 -7.2 -12.8 -4.2 -17.6 C-2.4 -20.5 0 -21.8 0 -21.8 C0 -21.8 2.4 -20.5 4.2 -17.6 C7.2 -12.8 4.8 -6.6 0 -3 Z" fill="#ffffff" opacity="0.96"/>
+    <path d="M0 -3 C-4.8 -6.6 -7.2 -12.8 -4.2 -17.6 C-2.4 -20.5 0 -21.8 0 -21.8 C0 -21.8 2.4 -20.5 4.2 -17.6 C7.2 -12.8 4.8 -6.6 0 -3 Z" fill="#ffffff" opacity="0.96" transform="rotate(72)"/>
+    <path d="M0 -3 C-4.8 -6.6 -7.2 -12.8 -4.2 -17.6 C-2.4 -20.5 0 -21.8 0 -21.8 C0 -21.8 2.4 -20.5 4.2 -17.6 C7.2 -12.8 4.8 -6.6 0 -3 Z" fill="#ffffff" opacity="0.96" transform="rotate(144)"/>
+    <path d="M0 -3 C-4.8 -6.6 -7.2 -12.8 -4.2 -17.6 C-2.4 -20.5 0 -21.8 0 -21.8 C0 -21.8 2.4 -20.5 4.2 -17.6 C7.2 -12.8 4.8 -6.6 0 -3 Z" fill="#ffffff" opacity="0.96" transform="rotate(216)"/>
+    <path d="M0 -3 C-4.8 -6.6 -7.2 -12.8 -4.2 -17.6 C-2.4 -20.5 0 -21.8 0 -21.8 C0 -21.8 2.4 -20.5 4.2 -17.6 C7.2 -12.8 4.8 -6.6 0 -3 Z" fill="#ffffff" opacity="0.96" transform="rotate(288)"/>
+    <circle r="4.2" fill="#007848"/>
+    <circle r="2" fill="#a7f3d0"/>
+  </g>
+</svg>
