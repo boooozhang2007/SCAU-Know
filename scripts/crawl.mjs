@@ -5,6 +5,11 @@
  * 用法：
  *   node scripts/crawl.mjs                 # 全量抓取（含正文）
  *   node scripts/crawl.mjs --no-detail     # 只抓列表，快
+ *   node scripts/crawl.mjs --no-attachments # 跳过附件下载与解析
+ *   node scripts/crawl.mjs --no-images     # 跳过图片本地镜像
+ *   node scripts/crawl.mjs --no-wechat     # 跳过微信公众号抓取
+ *   node scripts/crawl.mjs --no-enrich     # 跳过 AI / 规则结构化抽取
+ *   node scripts/crawl.mjs --no-alerts     # 跳过监控提醒触发
  *   node scripts/crawl.mjs --only nxy,zb   # 只抓指定站点
  *   node scripts/crawl.mjs --limit 10      # 每站 10 条
  *   node scripts/crawl.mjs --list          # 列出所有源
@@ -62,6 +67,11 @@ async function main() {
     only: only.length ? only : undefined,
     limitPerSource: Number(val("--limit", "20")),
     fetchDetail: !has("--no-detail"),
+    parseAttachments: has("--no-attachments") ? false : undefined,
+    mirrorImages: has("--no-images") ? false : undefined,
+    includeWechat: has("--no-wechat") ? false : undefined,
+    runEnrich: has("--no-enrich") ? false : undefined,
+    runAlerts: has("--no-alerts") ? false : undefined,
     concurrency: Number(val("--concurrency", "3")),
     onProgress: (m) => console.log(m),
   });

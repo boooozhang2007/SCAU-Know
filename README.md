@@ -117,7 +117,7 @@ pnpm install
 cp .env.example .env.local
 ```
 
-若仅需本地体验，不填任何 API Key 即可启动（系统会自动退回演示数据或规则引擎）；接入真实抓取与公众号需配置 `WECHAT_MODE`、`WEMP_*` 及 `ADMIN_SECRET`。
+若仅需本地体验或直接一键部署静态站，不填任何 API Key 即可启动（仓库已内置经 `export:seed` 筛选的近期华农真实官网/公众号首屏快照，每条均含真实原文链接；GitHub Actions 构建时也会自动尝试抓取公网最新官网通知并做兜底保护）。接入定时全量抓取与私有公众号需配置 `WECHAT_MODE`、`WEMP_*` 及 `ADMIN_SECRET`。
 
 ### 3. 启动本地开发与私有后台
 
@@ -159,6 +159,7 @@ pnpm build:static   # 输出纯静态站点到 ./out/
 | `pnpm optimize:thumbs` | 批量预生成封面图 `w640` WebP 缩略图缓存 |
 | `pnpm reparse:attachments` | 清理误抓网页链接并重解析存量 `.doc` / `.zip` / `.rar` 等附件 |
 | `pnpm export:data` | 导出前端精简摘要与分片详情 JSON 到 `public/static-data/` |
+| `pnpm export:seed` | 从本地采集库抽取近期真实公开通知，更新仓库内置首屏快照 `src/lib/seed-notices.json` |
 | `pnpm build:static` | 构建剔除后台与原图的纯静态站点到 `./out/` |
 | `pnpm publish:static` | 导出静态快照并触发 Deploy Hook / GitHub Actions 重建 |
 

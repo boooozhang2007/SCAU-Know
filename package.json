@@ -13,6 +13,7 @@
     "daemon": "tsx scripts/cron-daemon.mjs",
     "enrich": "tsx scripts/enrich-ai.mjs",
     "export:data": "tsx scripts/export-static-data.mjs",
+    "export:seed": "tsx scripts/export-seed.mjs",
     "optimize:thumbs": "node scripts/optimize-thumbs.mjs",
     "reparse:attachments": "tsx scripts/reparse-attachments.mjs",
     "build:static": "node scripts/build-static.mjs",

@@ -341,12 +341,18 @@ async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
       return fresh;
     }
   } catch {
-    /* 读取失败则回退到内置演示语料 */
+    /* 读取失败则回退到内置真实首屏快照 */
   }
 
   const seed = SEED_NOTICES.map((n) => ({
     ...n,
-    subject: inferSubject(n.source, n.title),
+    paragraphs:
+      n.paragraphs.length > 0
+        ? n.paragraphs
+        : (n.blocks ?? [])
+            .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
+            .map((b) => b.text),
+    subject: n.subject ?? inferSubject(n.source, n.title),
     isNew: isToday(n.publishedAt, now),
   }));
   return {

@@ -174,6 +174,7 @@ export function ImageLightbox({
             <img
               src={imgUrl}
               alt={current.alt || "通知图片原图"}
+              referrerPolicy={imgUrl.startsWith("http") ? "no-referrer" : undefined}
               style={
                 originalMode
                   ? undefined

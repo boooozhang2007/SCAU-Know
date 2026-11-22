@@ -1,6 +1,9 @@
 name: Deploy Static Site to CDN
 
 on:
+  # 如需每日自动重新抓取公网官网并刷新部署，可取消下方定时触发器注释（北京时间 07:30）：
+  # schedule:
+  #   - cron: "30 23 * * *"
   push:
     branches: [main]
     paths:
@@ -46,6 +49,31 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Crawl public SCAU portals (best-effort)
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          if [ ! -f data/notices.json ]; then
+            pnpm crawl --limit 8 --concurrency 6 --no-attachments --no-images --no-wechat --no-alerts || true
+          fi
+          node -e '
+            const fs = require("fs");
+            const p = "data/notices.json";
+            if (!fs.existsSync(p)) { console.log("No crawl file; will use built-in real seed snapshot."); process.exit(0); }
+            try {
+              const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+              const list = Array.isArray(raw) ? raw : (raw.notices || []);
+              console.log("CI crawl notices count:", list.length);
+              if (list.length < 40) {
+                console.log("Too few crawled notices (< 40); removing partial file to keep rich built-in seed snapshot.");
+                fs.unlinkSync(p);
+              }
+            } catch (e) {
+              console.log("Invalid crawl JSON; removing:", e.message);
+              fs.unlinkSync(p);
+            }
+          '
 
       - name: Build pure static bundle
         run: pnpm build:static

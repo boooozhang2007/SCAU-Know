@@ -82,6 +82,8 @@ export const NoticeCard = memo(function NoticeCard({
   const eventChip = notice.startsAt ? formatEventChip(notice.startsAt, lang) : null;
   const attCount = notice.attachments?.length ?? notice.attachmentCount ?? 0;
   const coverThumb = notice.cover ? mediaThumbUrl(notice.cover, 640) : undefined;
+  const [brokenCoverSrc, setBrokenCoverSrc] = useState<string | null>(null);
+  const showCover = Boolean(coverThumb && brokenCoverSrc !== coverThumb);
 
   return (
     <li
@@ -99,7 +101,7 @@ export const NoticeCard = memo(function NoticeCard({
         aria-haspopup="dialog"
         onClick={() => onOpen(notice)}
       >
-        {coverThumb && (
+        {showCover && coverThumb && (
           <span className="notice-cover">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -110,6 +112,8 @@ export const NoticeCard = memo(function NoticeCard({
               loading={priorityCover ? "eager" : "lazy"}
               fetchPriority={priorityCover ? "high" : undefined}
               decoding="async"
+              referrerPolicy={coverThumb.startsWith("http") ? "no-referrer" : undefined}
+              onError={() => setBrokenCoverSrc(coverThumb)}
             />
           </span>
         )}
@@ -128,7 +132,7 @@ export const NoticeCard = memo(function NoticeCard({
             {notice.title}
           </span>
 
-          {excerpt && !notice.cover && (
+          {excerpt && !showCover && (
             <span className="notice-block-excerpt">{excerpt}</span>
           )}
 
@@ -521,6 +525,7 @@ export function DetailSheet({
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const [fetchedDetail, setFetchedDetail] = useState<Notice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [brokenImgs, setBrokenImgs] = useState<Record<string, true>>({});
 
   const activeNotice = useMemo(() => {
     if (!notice) return null;
@@ -537,6 +542,7 @@ export function DetailSheet({
     }
     setCopied(false);
     setLightboxIdx(null);
+    setBrokenImgs({});
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
 
     if (!notice) {
@@ -800,7 +806,7 @@ export function DetailSheet({
                 </span>
               </div>
 
-              {activeNotice.cover && !coverAlreadyInBlocks && (
+              {activeNotice.cover && !coverAlreadyInBlocks && !brokenImgs[activeNotice.cover] && (
                 <button
                   type="button"
                   className="detail-cover-btn"
@@ -812,6 +818,10 @@ export function DetailSheet({
                     src={mediaThumbUrl(activeNotice.cover, 1200)}
                     alt={activeNotice.title}
                     decoding="async"
+                    referrerPolicy={activeNotice.cover.startsWith("http") ? "no-referrer" : undefined}
+                    onError={() =>
+                      setBrokenImgs((prev) => ({ ...prev, [activeNotice.cover!]: true }))
+                    }
                   />
                   <span className="detail-img-zoom-hint">
                     <Maximize2 />
@@ -901,7 +911,7 @@ export function DetailSheet({
                         </p>
                       ) : blk.type === "table" ? (
                         <InlineTableBlock key={i} block={blk} en={en} />
-                      ) : (
+                      ) : brokenImgs[blk.src] ? null : (
                         <button
                           key={i}
                           type="button"
@@ -915,6 +925,10 @@ export function DetailSheet({
                             alt={blk.alt || ""}
                             loading="lazy"
                             decoding="async"
+                            referrerPolicy={blk.src.startsWith("http") ? "no-referrer" : undefined}
+                            onError={() =>
+                              setBrokenImgs((prev) => ({ ...prev, [blk.src]: true }))
+                            }
                           />
                           <span className="detail-img-zoom-hint">
                             <Maximize2 />
