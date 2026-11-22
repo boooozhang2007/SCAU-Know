@@ -6,15 +6,29 @@ on:
     paths:
       - "src/**"
       - "public/**"
+      - "scripts/**"
       - "data/notices.json"
+      - "next.config.ts"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-static.yml"
   repository_dispatch:
     types: [crawl-updated]
   workflow_dispatch:
 
+# 连续 push 时取消旧构建，避免排队白烧额度
+concurrency:
+  group: deploy-static-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # job 级 env 才能在 step 的 if 里读到（step 级 env 求值晚于 if）
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,17 +50,35 @@ jobs:
       - name: Build pure static bundle
         run: pnpm build:static
 
-      - name: Upload static bundle artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: scau-know-static-out
-          path: out
+      - name: Preflight — 文件数与体积（Pages 单次部署上限 20000 文件）
+        run: |
+          n=$(find out -type f | wc -l)
+          echo "files=$n"
+          du -sh out
+          if [ "$n" -gt 19000 ]; then
+            echo "::error::out/ 文件数 $n 已接近 Cloudflare Pages 20000 上限，拆分 details 或合并 JSON"
+            exit 1
+          fi
+          big=$(find out -type f -size +25M | head -5)
+          if [ -n "$big" ]; then
+            echo "::error::存在超过 25MB 的单文件（Pages 上限）：$big"
+            exit 1
+          fi
 
-      # ── 部署到 Cloudflare Pages（在仓库 Secrets 配置 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID 后启用）──
+      # Direct Upload 不触发 Pages 自身的构建流水线，不消耗 500 builds/月 配额
       - name: Deploy to Cloudflare Pages
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        if: env.CF_TOKEN != ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy out --project-name=scau-know
+          command: pages deploy out --project-name=scau-know --branch=main --commit-dirty=true
+
+      # 只在失败时留产物，避免每天 12 次把 artifact 1GB 配额打满
+      - name: Upload bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scau-know-static-out
+          path: out
+          retention-days: 1
