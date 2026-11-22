@@ -1,6 +1,7 @@
 "use client";
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -37,12 +38,16 @@ import {
 } from "@/lib/preferences";
 import {
   ColumnPicker,
-  DetailSheet,
   NoticeCard,
   ViewModePicker,
 } from "./notice";
 import { WaterfallGrid } from "./waterfall";
 import { Icon } from "./icon";
+
+const DetailSheet = dynamic(
+  () => import("./detail-sheet").then((m) => m.DetailSheet),
+  { ssr: false },
+);
 
 /** 首页每个板块初始展示条数，避免一次渲染上百条 DOM，超出提供「查看全部」入口 */
 const HOME_SECTION_LIMIT = 18;
@@ -59,6 +64,12 @@ export function NoticeBoard({
   now,
   initialQuery = "",
   singleSection = false,
+  isPartial = false,
+  loadingFull = false,
+  totalCount,
+  categoryCounts,
+  searchIndex,
+  onRequestFullData,
   onOpenSources,
 }: {
   notices: Notice[];
@@ -70,6 +81,12 @@ export function NoticeBoard({
   now: string;
   initialQuery?: string;
   singleSection?: boolean;
+  isPartial?: boolean;
+  loadingFull?: boolean;
+  totalCount?: number;
+  categoryCounts?: Record<string, number>;
+  searchIndex?: Record<string, string> | null;
+  onRequestFullData?: () => void;
   onOpenSources?: () => void;
 }) {
   const router = useRouter();
@@ -91,22 +108,90 @@ export function NoticeBoard({
   const [includeGeneral, setIncludeGeneral] = useState(true);
   const [subjectOpen, setSubjectOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_BATCH);
+  const [sheetActivated, setSheetActivated] = useState<boolean>(() => Boolean(initialNoticeId));
   const [openNotice, setOpenNotice] = useState<Notice | null>(() => {
     if (!initialNoticeId) return null;
     return notices.find((n) => n.id === initialNoticeId) ?? null;
   });
   const subjectWrapRef = useRef<HTMLDivElement>(null);
+  const lazySentinelRef = useRef<HTMLDivElement>(null);
+  const handledDeepLinkRef = useRef<string | null>(
+    initialNoticeId && notices.some((n) => n.id === initialNoticeId) ? initialNoticeId : null,
+  );
 
-  // 路由切换时重置分页，并响应深链 ?notice=xxx
+  const handleOpenNotice = useCallback((n: Notice) => {
+    setSheetActivated(true);
+    setOpenNotice(n);
+  }, []);
+
+  // 路由切换时重置分页，并响应深链 ?notice=xxx（若未在首屏切片内则直拉单条详情）
   useEffect(() => {
     setVisibleCount(PAGE_BATCH);
   }, [activeCategory, activeCluster, activeSource, initialQuery]);
 
   useEffect(() => {
-    if (!initialNoticeId) return;
+    if (!initialNoticeId) {
+      handledDeepLinkRef.current = null;
+      return;
+    }
+    if (handledDeepLinkRef.current === initialNoticeId) return;
+
     const found = notices.find((n) => n.id === initialNoticeId);
-    if (found) setOpenNotice(found);
+    if (found) {
+      handledDeepLinkRef.current = initialNoticeId;
+      setSheetActivated(true);
+      setOpenNotice(found);
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const isStatic = process.env.NEXT_PUBLIC_STATIC_MODE === "1";
+    const detailUrl = isStatic
+      ? `/static-data/details/${encodeURIComponent(initialNoticeId)}.json`
+      : `/api/notices?id=${encodeURIComponent(initialNoticeId)}`;
+
+    fetch(detailUrl, {
+      cache: isStatic ? "default" : "no-cache",
+      signal: ctrl.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((payload: (Notice & { ok?: boolean; notice?: Notice }) | null) => {
+        const full =
+          payload && "notice" in payload && payload.ok && payload.notice
+            ? payload.notice
+            : payload && "id" in payload && payload.id
+              ? (payload as Notice)
+              : null;
+        if (full) {
+          handledDeepLinkRef.current = initialNoticeId;
+          setSheetActivated(true);
+          setOpenNotice(full);
+        }
+      })
+      .catch(() => {});
+
+    return () => ctrl.abort();
   }, [initialNoticeId, notices]);
+
+  // 交互筛选时自动拉取全量摘要
+  useEffect(() => {
+    if (!isPartial || !onRequestFullData) return;
+    if (
+      subjectOpen ||
+      selectedSubjects.length > 0 ||
+      viewMode === "star-only" ||
+      (viewMode === "star-first" && starred.length > 0)
+    ) {
+      onRequestFullData();
+    }
+  }, [
+    isPartial,
+    onRequestFullData,
+    subjectOpen,
+    selectedSubjects.length,
+    viewMode,
+    starred.length,
+  ]);
 
   // 学科筛选弹层外部点击 / Esc 关闭
   useEffect(() => {
@@ -133,9 +218,11 @@ export function NoticeBoard({
     if (activeCategory) list = list.filter((n) => n.category === activeCategory);
     if (activeCluster) list = list.filter((n) => n.cluster === activeCluster);
     if (activeSource) list = list.filter((n) => n.source === activeSource);
-    if (initialQuery.trim()) list = list.filter((n) => matchesQuery(n, initialQuery));
+    if (initialQuery.trim()) {
+      list = list.filter((n) => matchesQuery(n, initialQuery, searchIndex?.[n.id]));
+    }
     return list;
-  }, [notices, activeCategory, activeCluster, activeSource, initialQuery]);
+  }, [notices, activeCategory, activeCluster, activeSource, initialQuery, searchIndex]);
 
   const subjectCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -245,6 +332,45 @@ export function NoticeBoard({
 
   const isSingleFeed = singleSection || Boolean(activeCategory);
 
+  // 多板块模式：当用户开始向下滚动并接近第 2 个板块底部时自动加载其余板块
+  useEffect(() => {
+    if (!isPartial || isSingleFeed || !onRequestFullData) return;
+    const el = lazySentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const tryTrigger = () => {
+      if (window.scrollY <= 24) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.top <= window.innerHeight + 350) {
+        onRequestFullData();
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (window.scrollY > 24 && entries.some((e) => e.isIntersecting)) {
+          onRequestFullData();
+        }
+      },
+      { rootMargin: "0px 0px 350px 0px" },
+    );
+    io.observe(el);
+    window.addEventListener("scroll", tryTrigger, { passive: true });
+    return () => {
+      io.disconnect();
+      window.removeEventListener("scroll", tryTrigger);
+    };
+  }, [isPartial, isSingleFeed, onRequestFullData]);
+
+  const boardTotalDisplay =
+    !hasFilters && isPartial
+      ? isSingleFeed && activeCategory && categoryCounts?.[activeCategory] !== undefined
+        ? categoryCounts[activeCategory]
+        : !activeCluster && totalCount !== undefined
+          ? totalCount
+          : filtered.length
+      : filtered.length;
+
   return (
     <>
       <div className="board-toolbar">
@@ -262,7 +388,7 @@ export function NoticeBoard({
             )}
             <h2>{resolvedHeading}</h2>
             <span className="board-total">
-              {filtered.length}
+              {boardTotalDisplay}
               <span className="sr-only">{en ? " notices" : " 条通知"}</span>
             </span>
           </div>
@@ -464,55 +590,74 @@ export function NoticeBoard({
         </span>
 
         {sections.length === 0 ? (
-          <div className="empty-state">
-            <SearchX />
-            <strong>
-              {viewMode === "star-only" && starred.length === 0
-                ? en
-                  ? "No starred sources yet"
-                  : "还没有星标任何学院或部门"
-                : en
-                  ? "No matching notices"
-                  : "没有匹配的条目"}
-            </strong>
-            <p>
-              {viewMode === "star-only" && starred.length === 0
-                ? en
-                  ? "Open Sources Directory to star the colleges and departments you follow."
-                  : "前往「信息来源」星标常用学院或部门，即可在此聚焦查看。"
-                : en
-                  ? "Try another keyword or reset your filters."
-                  : "换个关键词，或重置学科与来源筛选后再试。"}
-            </p>
-            <div className="empty-state-actions">
-              {viewMode === "star-only" && onOpenSources && (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={onOpenSources}
-                >
-                  <Star style={{ width: 14, height: 14 }} />
-                  <span>{en ? "Choose Sources" : "去星标常用来源"}</span>
-                </button>
-              )}
-              {hasFilters && (
-                <button
-                  type="button"
-                  className="plain-button"
-                  onClick={clearAllFilters}
-                >
-                  <X style={{ width: 14, height: 14 }} />
-                  <span>{en ? "Reset filters" : "清除条件"}</span>
-                </button>
-              )}
+          loadingFull || (isPartial && (hasFilters || Boolean(activeCluster))) ? (
+            <div className="empty-state" role="status" aria-live="polite">
+              <strong>{en ? "Loading matching notices..." : "正在加载全部通知…"}</strong>
+              <p>
+                {en
+                  ? "Fetching the complete campus index for filtering and search."
+                  : "正在从全站通知摘要中检索匹配结果，请稍候。"}
+              </p>
             </div>
-          </div>
+          ) : (
+            <div className="empty-state">
+              <SearchX />
+              <strong>
+                {viewMode === "star-only" && starred.length === 0
+                  ? en
+                    ? "No starred sources yet"
+                    : "还没有星标任何学院或部门"
+                  : en
+                    ? "No matching notices"
+                    : "没有匹配的条目"}
+              </strong>
+              <p>
+                {viewMode === "star-only" && starred.length === 0
+                  ? en
+                    ? "Open Sources Directory to star the colleges and departments you follow."
+                    : "前往「信息来源」星标常用学院或部门，即可在此聚焦查看。"
+                  : en
+                    ? "Try another keyword or reset your filters."
+                    : "换个关键词，或重置学科与来源筛选后再试。"}
+              </p>
+              <div className="empty-state-actions">
+                {viewMode === "star-only" && onOpenSources && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={onOpenSources}
+                  >
+                    <Star style={{ width: 14, height: 14 }} />
+                    <span>{en ? "Choose Sources" : "去星标常用来源"}</span>
+                  </button>
+                )}
+                {hasFilters && (
+                  <button
+                    type="button"
+                    className="plain-button"
+                    onClick={clearAllFilters}
+                  >
+                    <X style={{ width: 14, height: 14 }} />
+                    <span>{en ? "Reset filters" : "清除条件"}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )
         ) : isSingleFeed ? (
           /* 单分类全页流式布局（不限高度，底部支持加载更多） */
           (() => {
             const items = filtered;
             const visibleItems = items.slice(0, visibleCount);
-            const hasMore = visibleItems.length < items.length;
+            const categoryTrueTotal =
+              !hasFilters &&
+              isPartial &&
+              activeCategory &&
+              categoryCounts?.[activeCategory] !== undefined
+                ? categoryCounts[activeCategory]
+                : items.length;
+            const remainingCount = Math.max(0, categoryTrueTotal - visibleItems.length);
+            const hasMore = remainingCount > 0;
             const onlyCat = sections[0]?.category;
             let priorityAssigned = 0;
             return (
@@ -531,7 +676,7 @@ export function NoticeBoard({
                         index={i}
                         lang={lang}
                         starred={isStarred(n.source)}
-                        onOpen={setOpenNotice}
+                        onOpen={handleOpenNotice}
                         priorityCover={isPriority}
                         timeDesktop={formatShortTime(n.publishedAt, nowDate, lang)}
                         timeMobile={formatShortTimeCompact(n.publishedAt, nowDate, lang)}
@@ -545,13 +690,19 @@ export function NoticeBoard({
                     <button
                       type="button"
                       className="plain-button load-more-btn"
-                      onClick={() =>
-                        startTransition(() => setVisibleCount((c) => c + PAGE_BATCH))
-                      }
+                      disabled={loadingFull}
+                      onClick={() => {
+                        if (isPartial) onRequestFullData?.();
+                        startTransition(() => setVisibleCount((c) => c + PAGE_BATCH));
+                      }}
                     >
-                      {en
-                        ? `Load more (${items.length - visibleItems.length} left)`
-                        : `加载更多（剩余 ${items.length - visibleItems.length} 条）`}
+                      {loadingFull
+                        ? en
+                          ? "Loading..."
+                          : "正在加载更多…"
+                        : en
+                          ? `Load more (${remainingCount} left)`
+                          : `加载更多（剩余 ${remainingCount} 条）`}
                     </button>
                   </div>
                 )}
@@ -559,108 +710,133 @@ export function NoticeBoard({
             );
           })()
         ) : (
-          /* 首页/多板块分区瀑布流：首屏外板块启用 content-visibility 延后渲染 */
-          <div className="notice-sections">
-            {sections.map(({ category, items }, sectionIdx) => {
-              const previewItems = items.slice(0, HOME_SECTION_LIMIT);
-              const truncated = items.length > HOME_SECTION_LIMIT;
-              const scrollable = previewItems.length > desktopCols * 2;
-              const deferred = sectionIdx >= 2;
-              let priorityAssigned = 0;
-              return (
-                <section
-                  key={category.slug}
-                  className={
-                    deferred
-                      ? "notice-section notice-section-deferred"
-                      : "notice-section"
-                  }
-                  data-tone={category.tone}
-                  aria-labelledby={`notice-section-${category.slug}`}
-                >
-                  <div className="section-heading">
-                    <span className="section-icon">
-                      <Icon name={category.icon} />
-                    </span>
-                    <h2 id={`notice-section-${category.slug}`}>
-                      {en ? category.nameEn : category.name}
-                    </h2>
-                    <span className="section-count">
-                      {en ? `${items.length}` : `${items.length}条`}
-                    </span>
-                    <Link
-                      className="section-more"
-                      href={
-                        initialQuery.trim()
-                          ? `/category/${category.slug}?q=${encodeURIComponent(initialQuery.trim())}`
-                          : `/category/${category.slug}`
-                      }
+          /* 首页/多板块分区瀑布流：首屏仅挂载前 2 板块，滚到底部时自动拉取并展开其余板块 */
+          <>
+            <div className="notice-sections">
+              {sections.map(({ category, items }, sectionIdx) => {
+                const previewItems = items.slice(0, HOME_SECTION_LIMIT);
+                const sectionTotal =
+                  !hasFilters && isPartial && categoryCounts?.[category.slug] !== undefined
+                    ? categoryCounts[category.slug]
+                    : items.length;
+                const truncated = sectionTotal > HOME_SECTION_LIMIT;
+                const scrollable = previewItems.length > desktopCols * 2;
+                const deferred = sectionIdx >= 2;
+                let priorityAssigned = 0;
+                return (
+                  <section
+                    key={category.slug}
+                    className={
+                      deferred
+                        ? "notice-section notice-section-deferred"
+                        : "notice-section"
+                    }
+                    data-tone={category.tone}
+                    aria-labelledby={`notice-section-${category.slug}`}
+                  >
+                    <div className="section-heading">
+                      <span className="section-icon">
+                        <Icon name={category.icon} />
+                      </span>
+                      <h2 id={`notice-section-${category.slug}`}>
+                        {en ? category.nameEn : category.name}
+                      </h2>
+                      <span className="section-count">
+                        {en ? `${sectionTotal}` : `${sectionTotal}条`}
+                      </span>
+                      <Link
+                        className="section-more"
+                        href={
+                          initialQuery.trim()
+                            ? `/category/${category.slug}?q=${encodeURIComponent(initialQuery.trim())}`
+                            : `/category/${category.slug}`
+                        }
+                        aria-label={
+                          en
+                            ? `View more ${category.nameEn}`
+                            : `查看更多${category.name}`
+                        }
+                      >
+                        <span>{en ? "View more" : "查看更多"}</span>
+                        <ArrowRight />
+                      </Link>
+                    </div>
+
+                    <div
+                      className={`notice-section-scroll ${scrollable ? "is-scrollable" : ""}`}
+                      tabIndex={scrollable ? 0 : undefined}
+                      role="region"
                       aria-label={
                         en
-                          ? `View more ${category.nameEn}`
-                          : `查看更多${category.name}`
+                          ? `${category.nameEn} notices`
+                          : `${category.name}通知列表`
                       }
                     >
-                      <span>{en ? "View more" : "查看更多"}</span>
-                      <ArrowRight />
-                    </Link>
-                  </div>
+                      <WaterfallGrid cols={desktopCols} mobileCols={mobileCols} gap={10}>
+                        {previewItems.map((n, i) => {
+                          const isPriority =
+                            sectionIdx === 0 && Boolean(n.cover) && priorityAssigned < 2;
+                          if (isPriority) priorityAssigned++;
+                          return (
+                            <NoticeCard
+                              key={n.id}
+                              notice={n}
+                              index={i}
+                              lang={lang}
+                              starred={isStarred(n.source)}
+                              onOpen={handleOpenNotice}
+                              priorityCover={isPriority}
+                              timeDesktop={formatShortTime(n.publishedAt, nowDate, lang)}
+                              timeMobile={formatShortTimeCompact(n.publishedAt, nowDate, lang)}
+                            />
+                          );
+                        })}
+                      </WaterfallGrid>
 
-                  <div
-                    className={`notice-section-scroll ${scrollable ? "is-scrollable" : ""}`}
-                    tabIndex={scrollable ? 0 : undefined}
-                    role="region"
-                    aria-label={
-                      en
-                        ? `${category.nameEn} notices`
-                        : `${category.name}通知列表`
-                    }
-                  >
-                    <WaterfallGrid cols={desktopCols} mobileCols={mobileCols} gap={10}>
-                      {previewItems.map((n, i) => {
-                        const isPriority =
-                          sectionIdx === 0 && Boolean(n.cover) && priorityAssigned < 2;
-                        if (isPriority) priorityAssigned++;
-                        return (
-                          <NoticeCard
-                            key={n.id}
-                            notice={n}
-                            index={i}
-                            lang={lang}
-                            starred={isStarred(n.source)}
-                            onOpen={setOpenNotice}
-                            priorityCover={isPriority}
-                            timeDesktop={formatShortTime(n.publishedAt, nowDate, lang)}
-                            timeMobile={formatShortTimeCompact(n.publishedAt, nowDate, lang)}
-                          />
-                        );
-                      })}
-                    </WaterfallGrid>
+                      {truncated && (
+                        <div className="section-tail-more">
+                          <Link
+                            href={`/category/${category.slug}`}
+                            className="section-tail-link"
+                          >
+                            <span>
+                              {en
+                                ? `View all ${sectionTotal} in ${category.nameEn}`
+                                : `查看「${category.name}」全部 ${sectionTotal} 条`}
+                            </span>
+                            <ArrowRight />
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
 
-                    {truncated && (
-                      <div className="section-tail-more">
-                        <Link
-                          href={`/category/${category.slug}`}
-                          className="section-tail-link"
-                        >
-                          <span>
-                            {en
-                              ? `View all ${items.length} in ${category.nameEn}`
-                              : `查看「${category.name}」全部 ${items.length} 条`}
-                          </span>
-                          <ArrowRight />
-                        </Link>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
+            {isPartial && (
+              <div ref={lazySentinelRef} className="board-lazy-sentinel">
+                <button
+                  type="button"
+                  className="plain-button board-lazy-btn"
+                  disabled={loadingFull}
+                  onClick={() => onRequestFullData?.()}
+                >
+                  {loadingFull
+                    ? en
+                      ? "Loading remaining categories..."
+                      : "正在展开其余板块通知…"
+                    : en
+                      ? `Load remaining ${Math.max(0, CATEGORIES.length - sections.length)} categories`
+                      : `展开其余 ${Math.max(0, CATEGORIES.length - sections.length)} 个板块全部通知`}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      <DetailSheet notice={openNotice} onClose={handleCloseDetail} />
+      {sheetActivated && <DetailSheet notice={openNotice} onClose={handleCloseDetail} />}
     </>
   );
 }

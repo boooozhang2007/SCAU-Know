@@ -8,7 +8,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { CATEGORIES } from "@/lib/site";
-import { loadNotices, toNoticeSummary } from "@/lib/data";
+import { buildSearchSnippet, loadNotices, toNoticeSummary } from "@/lib/data";
 import { getScheduleStatus } from "@/lib/crawl/scheduler";
 import { staticWebpThumbPath } from "@/lib/media-url";
 import type { Notice } from "@/lib/types";
@@ -105,6 +105,15 @@ export async function exportStaticDataSnapshot(): Promise<StaticExportSummary> {
   const summaryFile = path.join(STATIC_DATA_DIR, "notices-summary.json");
   await fs.writeFile(summaryFile, JSON.stringify(summaries), "utf8");
   filesWritten.push("public/static-data/notices-summary.json");
+
+  const searchIndex: Record<string, string> = {};
+  for (const item of sanitizedFull) {
+    const snippet = buildSearchSnippet(item);
+    if (snippet) searchIndex[item.id] = snippet;
+  }
+  const searchIndexFile = path.join(STATIC_DATA_DIR, "search-index.json");
+  await fs.writeFile(searchIndexFile, JSON.stringify(searchIndex), "utf8");
+  filesWritten.push("public/static-data/search-index.json");
 
   for (const item of sanitizedFull) {
     const detailPath = path.join(DETAILS_DIR, `${item.id}.json`);

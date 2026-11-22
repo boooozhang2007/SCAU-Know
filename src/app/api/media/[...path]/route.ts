@@ -69,7 +69,7 @@ async function getOrCreateThumb(
     const out = await sharp(orig, { failOn: "none" })
       .rotate()
       .resize({ width: bucket, withoutEnlargement: true })
-      .webp({ quality: 78, effort: 4 })
+      .webp({ quality: bucket <= 480 ? 72 : 78, effort: 4 })
       .toBuffer();
     await fs.mkdir(THUMB_CACHE_DIR, { recursive: true });
     const tmp = `${thumbPath}.${process.pid}.${Date.now()}.tmp`;

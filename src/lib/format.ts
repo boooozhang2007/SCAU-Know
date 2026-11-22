@@ -256,7 +256,11 @@ export function cleanTextSpacing(text: string): string {
 }
 
 /** 关键词检索：标题、来源、摘要、分类名、学科名、地点、正文表格 */
-export function matchesQuery(n: Notice, q: string): boolean {
+export function matchesQuery(
+  n: Notice,
+  q: string,
+  extraSearchText?: string,
+): boolean {
   if (!q) return true;
   const kw = q.trim().toLowerCase();
   if (!kw) return true;
@@ -277,9 +281,22 @@ export function matchesQuery(n: Notice, q: string): boolean {
     subjectName(n.subject, "zh"),
     n.venue ?? "",
     n.searchSnippet ?? "",
+    extraSearchText ?? "",
     tableText,
   ]
     .join(" ")
     .toLowerCase();
   return hay.includes(kw);
+}
+
+/** 判断摘要是否比标题提供了额外信息，避免卡片与详情页重复显示相同一句话 */
+export function meaningfulSummary(title: string, summary: string): string | null {
+  const s = summary.trim();
+  if (!s || s.length < 14) return null;
+  const norm = (str: string) => str.replace(/[\s「」『』【】《》“”"':：，。、\-—]/g, "");
+  const nt = norm(title);
+  const ns = norm(s);
+  if (!ns || nt === ns || nt.includes(ns)) return null;
+  if (s.length <= 18 && /[:：]$/.test(s)) return null;
+  return s;
 }

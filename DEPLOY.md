@@ -33,8 +33,8 @@ pnpm build:static
 ```
 
 构建脚本 [scripts/build-static.mjs](scripts/build-static.mjs) 会自动完成：
-1. 生成精简列表 `public/static-data/notices-summary.json`、`manifest.json`（已置空内部采集报告 `lastReport`）与按条拆分的 `public/static-data/details/<id>.json`。
-2. 仅提取通知实际引用的图片并生成 `w640` / `w1200` WebP 缩略图至 `/media/thumbs/`，剔除原始大图目录，单文件体积与总体积远低于 Cloudflare Pages 25 MB / 平台限额。
+1. 生成极简列表 `public/static-data/notices-summary.json`、`search-index.json`、`manifest.json`（已置空内部采集报告 `lastReport`）与按条拆分的 `public/static-data/details/<id>.json`；首页及分类页首屏仅内嵌首批卡片切片，其余板块在滚动或检索时懒加载。
+2. 仅提取通知实际引用的图片并生成 `w480` / `w1200` WebP 缩略图至 `/media/thumbs/`，剔除原始大图目录，单文件体积与总体积远低于 Cloudflare Pages 25 MB / 平台限额。
 3. 物理剔除 `src/app/admin`、`src/app/sources`、`src/app/api` 与 `data/attachments`。
 4. 保留完整交互能力（首页瀑布流、分类页、活动日历 `?category=`、关键词搜索 `?q=`、来源筛选 `?source=`、通知深链 `?notice=<id>` 与跨标签自动刷新）。
 
@@ -55,12 +55,14 @@ wrangler pages deploy out --project-name=scau-know
 
 `public/_headers` 已自动复制进 `out/_headers`，`/media/thumbs/*` 与 `/_next/static/*` 会生效 1 年强缓存，`/static-data/manifest.json` 与 `notices-summary.json` 会即时更新。
 
-### 方式 2：Vercel CLI
+### 方式 2：Vercel（内置 `vercel.json` 适配，需自定义域名）
 
 ```bash
 pnpm add -g vercel
 vercel deploy out --prod
 ```
+
+仓库已包含 `vercel.json`（可直接连接 GitHub 仓库自动执行 `pnpm build:static` 并设置强缓存头）；注意由于 `*.vercel.app` 在中国大陆不可达，公开服务务必在 Vercel 绑定自定义域名。
 
 ### 方式 3：阿里云 OSS / 腾讯云 COS（国内极速访问）
 

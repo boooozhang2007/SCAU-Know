@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * 预生成首页/列表卡片所需的 WebP 封面缩略图（w640），
- * 与 `/api/media/[...path]?w=640` 共享完全一致的 `.thumbs/` 缓存文件命名规则。
+ * 预生成首页/列表卡片所需的 WebP 封面缩略图（w480），
+ * 与 `/api/media/[...path]?w=480` 共享完全一致的 `.thumbs/` 缓存文件命名规则。
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -12,7 +12,7 @@ const NOTICES_PATH = path.join(ROOT, "data", "notices.json");
 const PUBLIC_MEDIA_DIR = path.join(ROOT, "public", "media");
 const THUMB_CACHE_DIR = path.join(PUBLIC_MEDIA_DIR, ".thumbs");
 const RASTER_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".avif"]);
-const WIDTH = 640;
+const WIDTH = 480;
 const CONCURRENCY = 4;
 
 function parseCoverSegments(coverUrl) {
@@ -90,7 +90,7 @@ async function main() {
         const out = await sharp(buf, { failOn: "none" })
           .rotate()
           .resize({ width: WIDTH, withoutEnlargement: true })
-          .webp({ quality: 78, effort: 4 })
+          .webp({ quality: 72, effort: 4 })
           .toBuffer();
         const tmp = `${thumbPath}.${process.pid}.${Date.now()}.tmp`;
         await fs.writeFile(tmp, out);

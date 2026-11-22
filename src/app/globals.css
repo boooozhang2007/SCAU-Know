@@ -1852,6 +1852,18 @@ svg {
   border-radius: 999px;
 }
 
+.board-lazy-sentinel {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0 8px;
+}
+.board-lazy-btn {
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
 /* ── 空态 ──────────────────────────────────────────────────── */
 .empty-state {
   display: flex;

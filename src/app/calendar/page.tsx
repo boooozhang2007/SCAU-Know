@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { loadNoticeSummaries } from "@/lib/data";
+import { loadInitialCalendarSlice } from "@/lib/data";
 import { SiteShell } from "@/components/site-shell";
 import { CalendarPageClient } from "@/components/calendar-page-client";
 import { CATEGORY_MAP } from "@/lib/site";
@@ -21,18 +21,21 @@ export default async function CalendarPage({
   const now = nowDate.toISOString();
   const activeCat = category && CATEGORY_MAP.has(category) ? category : null;
 
-  const { notices: NOTICES } = await loadNoticeSummaries(nowDate);
+  const slice = await loadInitialCalendarSlice(nowDate);
 
   return (
     <SiteShell
-      notices={NOTICES}
+      notices={slice.notices}
       heading="活动日历"
       activeCategory={activeCat}
+      initialTotalCount={slice.totalCount}
+      initialCategoryCounts={slice.categoryCounts}
+      initialPartial={slice.partial}
       hideCategoryNav
       now={now}
     >
       <CalendarPageClient
-        initialNotices={NOTICES}
+        initialNotices={slice.notices}
         initialNow={now}
         activeCat={activeCat}
       />

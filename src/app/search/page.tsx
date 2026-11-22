@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { loadNoticeSummaries, searchNoticeSummaries } from "@/lib/data";
+import { loadInitialHomeSlice, searchNoticeSummaries } from "@/lib/data";
 import { SiteShell } from "@/components/site-shell";
 import type { CategoryIntent } from "@/lib/site";
 
@@ -20,20 +20,25 @@ export default async function SearchPage({
   const now = nowDate.toISOString();
   const kw = (q ?? "").trim();
   const hydrateId = notice?.trim() || null;
-  const { notices } = kw
+  const hasFilters = Boolean(kw || cluster || source?.trim());
+  const slice = hasFilters
     ? await searchNoticeSummaries(kw, nowDate, hydrateId)
-    : await loadNoticeSummaries(nowDate, hydrateId);
+    : await loadInitialHomeSlice(nowDate, hydrateId);
+
   const activeCluster: CategoryIntent | null =
     cluster === "activity" || cluster === "information" ? cluster : null;
 
   return (
     <SiteShell
-      notices={notices}
+      notices={slice.notices}
       heading={kw ? `搜索：${kw}` : "全部"}
       activeCategory={null}
       activeCluster={activeCluster}
       activeSource={source?.trim() || null}
-      initialNoticeId={notice?.trim() || null}
+      initialNoticeId={hydrateId}
+      initialTotalCount={slice.totalCount}
+      initialCategoryCounts={slice.categoryCounts}
+      initialPartial={slice.partial}
       now={now}
       initialQuery={kw}
     />

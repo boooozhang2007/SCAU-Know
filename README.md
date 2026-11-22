@@ -141,7 +141,7 @@ pnpm crawl          # 抓取最新官网与公众号通知（可选）
 pnpm build:static   # 输出纯静态站点到 ./out/
 ```
 
-生成的 `./out/` 可直接通过 `wrangler pages deploy out`、Vercel CLI 或对象存储静态托管上线，具体自动化方案请参考 [DEPLOY.md](./DEPLOY.md)。
+生成的 `./out/` 可直接通过 `wrangler pages deploy out`、Vercel（仓库已内置 `vercel.json` 静态构建与缓存头配置；中国大陆访问需绑定自定义域名，默认 `*.vercel.app` 域名在境内受阻）或对象存储静态托管上线，具体自动化方案请参考 [DEPLOY.md](./DEPLOY.md)。
 
 ---
 
@@ -156,7 +156,7 @@ pnpm build:static   # 输出纯静态站点到 ./out/
 | `pnpm daemon` | 以独立后台进程运行定时抓取任务 |
 | `pnpm enrich` | 批量对库内通知执行 AI / 规则结构化解析 |
 | `pnpm setup:wemp` | 按配置批量发现并接入华农官方与校园公众号到 `we-mp-rss` |
-| `pnpm optimize:thumbs` | 批量预生成封面图 `w640` WebP 缩略图缓存 |
+| `pnpm optimize:thumbs` | 批量预生成封面图 `w480` WebP 缩略图缓存 |
 | `pnpm reparse:attachments` | 清理误抓网页链接并重解析存量 `.doc` / `.zip` / `.rar` 等附件 |
 | `pnpm export:data` | 导出前端精简摘要与分片详情 JSON 到 `public/static-data/` |
 | `pnpm export:seed` | 从本地采集库抽取近期真实公开通知，更新仓库内置首屏快照 `src/lib/seed-notices.json` |

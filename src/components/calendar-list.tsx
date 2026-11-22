@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   Calendar,
   CalendarClock,
@@ -24,8 +25,12 @@ import {
 } from "@/lib/format";
 import { shortSourceName } from "@/lib/sources";
 import { usePreferences } from "@/lib/preferences";
-import { DetailSheet } from "./notice";
 import { Icon } from "./icon";
+
+const DetailSheet = dynamic(
+  () => import("./detail-sheet").then((m) => m.DetailSheet),
+  { ssr: false },
+);
 
 /**
  * 活动日历（参照 pkuknow.cn/thu/calendar 周视图 + 全部排期双视图）：
@@ -46,7 +51,12 @@ export function CalendarList({
 
   const [starOnly, setStarOnly] = useState(false);
   const [viewAll, setViewAll] = useState(false);
+  const [sheetActivated, setSheetActivated] = useState(false);
   const [openNotice, setOpenNotice] = useState<Notice | null>(null);
+  const handleOpenNotice = (n: Notice) => {
+    setSheetActivated(true);
+    setOpenNotice(n);
+  };
 
   const scheduledEvents = useMemo(() => {
     return notices
@@ -264,7 +274,7 @@ export function CalendarList({
                     {en ? `${items.length} events` : `${items.length} 场`}
                   </span>
                 </div>
-                <CalendarEventRows items={items} onOpen={setOpenNotice} lang={lang} />
+                <CalendarEventRows items={items} onOpen={handleOpenNotice} lang={lang} />
               </section>
             );
           })}
@@ -290,7 +300,7 @@ export function CalendarList({
           </div>
           <CalendarEventRows
             items={selectedDayEvents}
-            onOpen={setOpenNotice}
+            onOpen={handleOpenNotice}
             lang={lang}
           />
         </section>
@@ -318,7 +328,9 @@ export function CalendarList({
         </div>
       )}
 
-      <DetailSheet notice={openNotice} onClose={() => setOpenNotice(null)} />
+      {sheetActivated && (
+        <DetailSheet notice={openNotice} onClose={() => setOpenNotice(null)} />
+      )}
     </>
   );
 }

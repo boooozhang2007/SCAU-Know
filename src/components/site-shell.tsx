@@ -3,6 +3,7 @@
 import {
   Suspense,
   createContext,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
@@ -10,12 +11,13 @@ import {
   useRef,
   useState,
 } from "react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { Masthead, SiteFooter } from "@/components/masthead";
 import { CategoryNav } from "@/components/category-nav";
 import { NoticeBoard } from "@/components/notice-board";
-import { PanelHost, type PanelKind, type StatsData } from "@/components/panel-host";
+import type { PanelKind, StatsData } from "@/components/panel-host";
 import type { Notice, SourceRef } from "@/lib/types";
 import type { CategoryIntent } from "@/lib/site";
 import { countBySource, toCstParts } from "@/lib/format";
@@ -26,6 +28,11 @@ import {
   wechatOfSource,
 } from "@/lib/sources";
 import { usePreferences } from "@/lib/preferences";
+
+const PanelHost = dynamic(
+  () => import("@/components/panel-host").then((m) => m.PanelHost),
+  { ssr: false },
+);
 
 interface LiveNoticesContextValue {
   notices: Notice[];
@@ -39,6 +46,9 @@ interface LowPriorityRequestInit extends RequestInit {
 const LiveNoticesContext = createContext<LiveNoticesContextValue | null>(null);
 
 const STATIC_MODE = process.env.NEXT_PUBLIC_STATIC_MODE === "1";
+
+let STATIC_FULL_NOTICES_CACHE: Notice[] | null = null;
+let SEARCH_INDEX_CACHE: Record<string, string> | null = null;
 
 interface UrlQueryState {
   q: string;
@@ -110,6 +120,9 @@ export function SiteShell({
   initialQuery = "",
   singleSection = false,
   hideCategoryNav = false,
+  initialTotalCount,
+  initialCategoryCounts,
+  initialPartial = false,
   children,
 }: {
   notices: Notice[];
@@ -122,12 +135,20 @@ export function SiteShell({
   initialQuery?: string;
   singleSection?: boolean;
   hideCategoryNav?: boolean;
+  initialTotalCount?: number;
+  initialCategoryCounts?: Record<string, number>;
+  initialPartial?: boolean;
   children?: React.ReactNode;
 }) {
   const { lang } = usePreferences();
   const en = lang === "en";
 
   const [panel, setPanel] = useState<PanelKind>(null);
+  const [panelActivated, setPanelActivated] = useState(false);
+  const openPanel = useCallback((kind: Exclude<PanelKind, null>) => {
+    setPanelActivated(true);
+    setPanel(kind);
+  }, []);
   const close = useCallback(() => setPanel(null), []);
   const [urlParams, setUrlParams] = useState<UrlQueryState | null>(null);
   const resolvedQuery = STATIC_MODE && urlParams ? urlParams.q : initialQuery;
@@ -137,6 +158,11 @@ export function SiteShell({
 
   const [liveNotices, setLiveNotices] = useState<Notice[]>(notices);
   const [liveNow, setLiveNow] = useState<string>(now);
+  const [isPartial, setIsPartial] = useState<boolean>(Boolean(initialPartial));
+  const [loadingFull, setLoadingFull] = useState<boolean>(false);
+  const [searchIndex, setSearchIndex] = useState<Record<string, string> | null>(
+    () => SEARCH_INDEX_CACHE,
+  );
   const [syncing, setSyncing] = useState(false);
   const [autoSyncSec, setAutoSyncSec] = useState<number>(60);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -149,16 +175,36 @@ export function SiteShell({
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentIdsRef = useRef<Set<string>>(new Set(notices.map((n) => n.id)));
   const countRef = useRef<number>(notices.length);
+  const knownTotalRef = useRef<number>(initialTotalCount ?? notices.length);
+  const isPartialRef = useRef<boolean>(Boolean(initialPartial));
+  const fullLoadPromiseRef = useRef<Promise<void> | null>(null);
   const topIdRef = useRef<string | null>(notices[0]?.id ?? null);
 
-  // 路由切换或服务端重传 props 时保持基线同步
+  isPartialRef.current = isPartial;
+
+  // 路由切换或服务端重传 props 时保持基线同步；若静态会话已缓存全量则直接恢复
   useEffect(() => {
+    if (STATIC_MODE && initialPartial && STATIC_FULL_NOTICES_CACHE) {
+      const full = STATIC_FULL_NOTICES_CACHE;
+      setLiveNotices(full);
+      setLiveNow(now);
+      setIsPartial(false);
+      isPartialRef.current = false;
+      currentIdsRef.current = new Set(full.map((n) => n.id));
+      countRef.current = full.length;
+      knownTotalRef.current = full.length;
+      topIdRef.current = full[0]?.id ?? null;
+      return;
+    }
     setLiveNotices(notices);
     setLiveNow(now);
+    setIsPartial(Boolean(initialPartial));
+    isPartialRef.current = Boolean(initialPartial);
     currentIdsRef.current = new Set(notices.map((n) => n.id));
     countRef.current = notices.length;
+    knownTotalRef.current = initialTotalCount ?? notices.length;
     topIdRef.current = notices[0]?.id ?? null;
-  }, [notices, now]);
+  }, [notices, now, initialPartial, initialTotalCount]);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -167,6 +213,111 @@ export function SiteShell({
       setToastMsg(null);
     }, 3600);
   }, []);
+
+  const ensureFullLoaded = useCallback(async () => {
+    if (!isPartialRef.current) return;
+    if (STATIC_MODE && STATIC_FULL_NOTICES_CACHE) {
+      const cached = STATIC_FULL_NOTICES_CACHE;
+      isPartialRef.current = false;
+      currentIdsRef.current = new Set(cached.map((n) => n.id));
+      countRef.current = cached.length;
+      knownTotalRef.current = cached.length;
+      topIdRef.current = cached[0]?.id ?? null;
+      startTransition(() => {
+        setLiveNotices(cached);
+        setIsPartial(false);
+      });
+      return;
+    }
+    if (fullLoadPromiseRef.current) {
+      await fullLoadPromiseRef.current;
+      return;
+    }
+
+    const run = (async () => {
+      setLoadingFull(true);
+      try {
+        let fetched: Notice[] | null = null;
+        if (STATIC_MODE) {
+          const res = await fetch("/static-data/notices-summary.json", {
+            cache: "default",
+          });
+          if (res.ok) {
+            fetched = (await res.json()) as Notice[];
+            STATIC_FULL_NOTICES_CACHE = fetched;
+          }
+        } else {
+          const res = await fetch("/api/notices", { cache: "no-cache" });
+          if (res.ok) {
+            const payload = (await res.json()) as {
+              version?: string;
+              notices?: Notice[];
+            };
+            if (Array.isArray(payload.notices)) {
+              fetched = payload.notices;
+              if (payload.version) versionRef.current = payload.version;
+            }
+          }
+        }
+        if (fetched) {
+          isPartialRef.current = false;
+          currentIdsRef.current = new Set(fetched.map((n) => n.id));
+          countRef.current = fetched.length;
+          knownTotalRef.current = fetched.length;
+          topIdRef.current = fetched[0]?.id ?? null;
+          startTransition(() => {
+            setLiveNotices(fetched!);
+            setIsPartial(false);
+          });
+        }
+      } catch {
+        /* 网络异常时保留已有首屏切片 */
+      } finally {
+        setLoadingFull(false);
+        fullLoadPromiseRef.current = null;
+      }
+    })();
+
+    fullLoadPromiseRef.current = run;
+    await run;
+  }, []);
+
+  // 按需补全搜索索引（静态模式下仅在存在关键词时拉取 search-index.json）
+  useEffect(() => {
+    if (!STATIC_MODE || !resolvedQuery.trim()) return;
+    if (SEARCH_INDEX_CACHE) {
+      setSearchIndex(SEARCH_INDEX_CACHE);
+      return;
+    }
+    let cancelled = false;
+    fetch("/static-data/search-index.json", { cache: "default" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((idx: Record<string, string> | null) => {
+        if (idx && !cancelled) {
+          SEARCH_INDEX_CACHE = idx;
+          setSearchIndex(idx);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedQuery]);
+
+  // 进入筛选/搜索/信息源/统计弹窗时自动拉取全量摘要
+  const needsFullForShell =
+    isPartial &&
+    (Boolean(resolvedQuery.trim()) ||
+      Boolean(resolvedCluster) ||
+      Boolean(resolvedSource) ||
+      panel === "sources" ||
+      panel === "stats");
+
+  useEffect(() => {
+    if (needsFullForShell) {
+      void ensureFullLoaded();
+    }
+  }, [needsFullForShell, ensureFullLoaded]);
 
   const performSync = useCallback(
     async ({ forceFull = false }: { forceFull?: boolean } = {}) => {
@@ -225,8 +376,10 @@ export function SiteShell({
         const isFirst = versionRef.current === null;
         const snapshotBehind =
           metaTotal > 0 &&
-          (metaTotal !== countRef.current ||
-            (Boolean(metaLatestId) && metaLatestId !== topIdRef.current));
+          (metaTotal !== knownTotalRef.current ||
+            (!isPartialRef.current &&
+              Boolean(metaLatestId) &&
+              metaLatestId !== topIdRef.current));
         const versionChanged =
           !isFirst && Boolean(metaVersion) && metaVersion !== versionRef.current;
 
@@ -263,6 +416,7 @@ export function SiteShell({
           } as LowPriorityRequestInit);
           if (fullRes.ok) {
             fetchedNotices = (await fullRes.json()) as Notice[];
+            STATIC_FULL_NOTICES_CACHE = fetchedNotices;
             nextNow = new Date().toISOString();
           }
         } else {
@@ -289,13 +443,16 @@ export function SiteShell({
         const addedDelta = fetchedNotices.filter((n) => !prevIds.has(n.id)).length;
         const changed =
           addedDelta > 0 ||
-          fetchedNotices.length !== countRef.current ||
-          fetchedNotices[0]?.id !== topIdRef.current;
+          fetchedNotices.length !== knownTotalRef.current ||
+          (!isPartialRef.current && fetchedNotices[0]?.id !== topIdRef.current);
 
+        isPartialRef.current = false;
         setLiveNotices(fetchedNotices);
+        setIsPartial(false);
         setLiveNow(nextNow);
         currentIdsRef.current = new Set(fetchedNotices.map((n) => n.id));
         countRef.current = fetchedNotices.length;
+        knownTotalRef.current = fetchedNotices.length;
         topIdRef.current = fetchedNotices[0]?.id ?? null;
 
         if (addedDelta > 0) {
@@ -401,11 +558,16 @@ export function SiteShell({
     };
   }, [performSync]);
 
-  const counts = useMemo(() => {
+  const computedCounts = useMemo(() => {
     const m: Record<string, number> = {};
     for (const n of liveNotices) m[n.category] = (m[n.category] ?? 0) + 1;
     return m;
   }, [liveNotices]);
+
+  const counts =
+    isPartial && initialCategoryCounts ? initialCategoryCounts : computedCounts;
+  const displayTotalCount =
+    isPartial && initialTotalCount ? initialTotalCount : liveNotices.length;
 
   const sources = useMemo<SourceRef[]>(() => {
     const map = countBySource(liveNotices);
@@ -448,11 +610,11 @@ export function SiteShell({
 
       <Masthead
         initialQuery={resolvedQuery}
-        totalCount={liveNotices.length}
-        onOpenInfo={() => setPanel("info")}
-        onOpenSources={() => setPanel("sources")}
-        onOpenMessage={() => setPanel("message")}
-        onOpenStats={() => setPanel("stats")}
+        totalCount={displayTotalCount}
+        onOpenInfo={() => openPanel("info")}
+        onOpenSources={() => openPanel("sources")}
+        onOpenMessage={() => openPanel("message")}
+        onOpenStats={() => openPanel("stats")}
       />
 
       {!hideCategoryNav && (
@@ -477,21 +639,29 @@ export function SiteShell({
               now={liveNow}
               initialQuery={resolvedQuery}
               singleSection={singleSection}
-              onOpenSources={() => setPanel("sources")}
+              isPartial={isPartial}
+              loadingFull={loadingFull}
+              totalCount={displayTotalCount}
+              categoryCounts={counts}
+              searchIndex={searchIndex}
+              onRequestFullData={() => void ensureFullLoaded()}
+              onOpenSources={() => openPanel("sources")}
             />
           )}
         </main>
       </LiveNoticesContext.Provider>
 
       <SiteFooter
-        totalCount={liveNotices.length}
+        totalCount={displayTotalCount}
         updatedAt={updatedLabel}
         autoSyncSec={autoSyncSec}
         syncing={syncing}
         onManualSync={() => void performSync({ forceFull: true })}
       />
 
-      <PanelHost panel={panel} onClose={close} sources={sources} stats={stats} />
+      {panelActivated && (
+        <PanelHost panel={panel} onClose={close} sources={sources} stats={stats} />
+      )}
 
       {toastMsg && (
         <div className="sync-toast" role="status" aria-live="polite">

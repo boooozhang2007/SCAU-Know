@@ -1,10 +1,17 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NOTICES as SEED_NOTICES } from "@/lib/notices";
-import type { Notice, NoticeAiMeta } from "@/lib/types";
+import type { Notice } from "@/lib/types";
 import type { CrawledNotice } from "@/lib/crawl/engine";
 import { readNotices } from "@/lib/crawl/store";
-import { cleanTextSpacing, cstDateKey, dayDiffCst, isToday, matchesQuery } from "@/lib/format";
+import {
+  cleanTextSpacing,
+  cstDateKey,
+  dayDiffCst,
+  isToday,
+  matchesQuery,
+  sortByPublished,
+} from "@/lib/format";
 import { inferSubject } from "@/lib/sources";
 import { CATEGORIES, type SubjectSlug } from "@/lib/site";
 
@@ -243,8 +250,9 @@ function toNotice(n: CrawledNotice, now: Date): Notice {
   };
 }
 
-function buildSearchSnippet(n: Notice): string | undefined {
+export function buildSearchSnippet(n: Notice): string | undefined {
   const parts: string[] = [];
+  if (n.summary) parts.push(n.summary);
   for (const b of n.blocks ?? []) {
     if (b.type !== "table") continue;
     if (b.caption) parts.push(b.caption);
@@ -256,31 +264,22 @@ function buildSearchSnippet(n: Notice): string | undefined {
   if (n.attachments?.length) {
     parts.push(n.attachments.map((a) => a.name).join(" "));
   }
+  if (n.paragraphs.length > 0) {
+    const paraJoined = n.paragraphs.join(" ").slice(0, 240);
+    if (paraJoined) parts.push(paraJoined);
+  }
   const joined = parts.join(" ").replace(/\s+/g, " ").trim();
-  return joined ? joined.slice(0, 320) : undefined;
+  return joined ? joined.slice(0, 420) : undefined;
 }
 
-function compactAiMeta(ai?: NoticeAiMeta): NoticeAiMeta | undefined {
-  if (!ai) return undefined;
-  return {
-    cleanTitle: ai.cleanTitle,
-    summary: ai.summary,
-    category: ai.category,
-    subject: ai.subject,
-    startsAt: ai.startsAt,
-    endsAt: ai.endsAt,
-    venue: ai.venue,
-    audience: ai.audience,
-    registrationRequired: ai.registrationRequired,
-    registrationDeadline: ai.registrationDeadline,
-    importance: ai.importance,
-    enrichedBy: ai.enrichedBy,
-    enrichedAt: ai.enrichedAt,
-  };
-}
-
-/** 生成用于首屏 SSR / 列表接口的轻量 Notice 摘要，剔除正文段落、全文块与附件细节 */
+/** 生成用于首屏 SSR / 列表接口的极简 Notice 摘要，剔除 AI 元数据、搜索索引与有封面时的摘要文本 */
 export function toNoticeSummary(n: Notice): Notice {
+  const trimmedSummary = n.cover
+    ? ""
+    : n.summary.length > 110
+      ? `${n.summary.slice(0, 110)}…`
+      : n.summary;
+  const attCount = n.attachments?.length || n.attachmentCount || 0;
   return {
     id: n.id,
     title: n.title,
@@ -290,20 +289,18 @@ export function toNoticeSummary(n: Notice): Notice {
     tone: n.tone,
     source: n.source,
     publishedAt: n.publishedAt,
-    startsAt: n.startsAt,
-    endsAt: n.endsAt,
-    venue: n.venue,
-    registration: n.registration,
-    summary: n.summary,
+    ...(n.startsAt ? { startsAt: n.startsAt } : {}),
+    ...(n.endsAt ? { endsAt: n.endsAt } : {}),
+    ...(n.venue ? { venue: n.venue } : {}),
+    ...(n.registration ? { registration: true } : {}),
+    summary: trimmedSummary,
     paragraphs: [],
-    attachmentCount: n.attachments?.length || n.attachmentCount || undefined,
+    ...(attCount > 0 ? { attachmentCount: attCount } : {}),
     summaryOnly: true,
-    searchSnippet: buildSearchSnippet(n),
-    ai: compactAiMeta(n.ai),
     url: n.url,
-    cover: n.cover,
-    isNew: n.isNew,
-    requiresAuth: n.requiresAuth,
+    ...(n.cover ? { cover: n.cover } : {}),
+    ...(n.isNew ? { isNew: true } : {}),
+    ...(n.requiresAuth ? { requiresAuth: true } : {}),
   };
 }
 
@@ -412,6 +409,123 @@ export async function loadNoticeSummaries(
   };
 }
 
+export interface InitialBoardSlice {
+  notices: Notice[];
+  totalCount: number;
+  categoryCounts: Record<string, number>;
+  partial: boolean;
+  fromCrawl: boolean;
+  crawledCount: number;
+}
+
+function computeCategoryCounts(list: Notice[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const n of list) {
+    counts[n.category] = (counts[n.category] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function withHydratedNotice(
+  sliced: Notice[],
+  byId: Map<string, Notice>,
+  hydrateNoticeId?: string | null,
+): Notice[] {
+  if (!hydrateNoticeId) return sliced;
+  const full = byId.get(hydrateNoticeId);
+  if (!full) return sliced;
+  const idx = sliced.findIndex((item) => item.id === hydrateNoticeId);
+  if (idx >= 0) {
+    const next = [...sliced];
+    next[idx] = full;
+    return next;
+  }
+  return [...sliced, full];
+}
+
+/**
+ * 首页首屏轻量切片（参照 pkuknow.cn/thu）：
+ * SSR 仅下发前 `sectionCount`（默认 2 个）非空板块、每板块 `perSection`（默认 18 条）与全站分类计数，
+ * 其余板块待滚动或交互时由客户端懒加载 `/static-data/notices-summary.json` 展开。
+ */
+export async function loadInitialHomeSlice(
+  now = new Date(),
+  hydrateNoticeId?: string | null,
+  sectionCount = 2,
+  perSection = 18,
+): Promise<InitialBoardSlice> {
+  const bundle = await getCachedBundle(now);
+  const byCategory = new Map<string, Notice[]>();
+  for (const item of bundle.summaries) {
+    const arr = byCategory.get(item.category) ?? [];
+    arr.push(item);
+    byCategory.set(item.category, arr);
+  }
+
+  const picked: Notice[] = [];
+  let takenSections = 0;
+  for (const cat of CATEGORIES) {
+    if (takenSections >= sectionCount) break;
+    const rawBucket = byCategory.get(cat.slug);
+    if (!rawBucket || rawBucket.length === 0) continue;
+    picked.push(...sortByPublished(rawBucket).slice(0, perSection));
+    takenSections++;
+  }
+
+  const sliced = withHydratedNotice(picked, bundle.byId, hydrateNoticeId);
+  return {
+    notices: sliced,
+    totalCount: bundle.summaries.length,
+    categoryCounts: computeCategoryCounts(bundle.summaries),
+    partial: sliced.length < bundle.summaries.length,
+    fromCrawl: bundle.fromCrawl,
+    crawledCount: bundle.crawledCount,
+  };
+}
+
+/**
+ * 单分类页首屏轻量切片：仅下发当前分类前 `limit`（默认 30 条）摘要与全站分类计数。
+ */
+export async function loadInitialCategorySlice(
+  slug: string,
+  now = new Date(),
+  hydrateNoticeId?: string | null,
+  limit = 30,
+): Promise<InitialBoardSlice> {
+  const bundle = await getCachedBundle(now);
+  const scoped = sortByPublished(bundle.summaries.filter((n) => n.category === slug)).slice(
+    0,
+    limit,
+  );
+  const sliced = withHydratedNotice(scoped, bundle.byId, hydrateNoticeId);
+  return {
+    notices: sliced,
+    totalCount: bundle.summaries.length,
+    categoryCounts: computeCategoryCounts(bundle.summaries),
+    partial: sliced.length < bundle.summaries.length,
+    fromCrawl: bundle.fromCrawl,
+    crawledCount: bundle.crawledCount,
+  };
+}
+
+/**
+ * 活动日历页首屏切片：仅下发包含排期时间（`startsAt`）的摘要条目。
+ */
+export async function loadInitialCalendarSlice(
+  now = new Date(),
+): Promise<InitialBoardSlice> {
+  const bundle = await getCachedBundle(now);
+  const scheduled = bundle.summaries.filter((n) => Boolean(n.startsAt));
+  return {
+    notices: scheduled,
+    totalCount: bundle.summaries.length,
+    categoryCounts: computeCategoryCounts(bundle.summaries),
+    partial: scheduled.length < bundle.summaries.length,
+    fromCrawl: bundle.fromCrawl,
+    crawledCount: bundle.crawledCount,
+  };
+}
+
 /** 按 ID O(1) 读取单条完整通知 */
 export async function loadNoticeById(
   id: string,
@@ -428,13 +542,19 @@ export async function searchNoticeSummaries(
   query: string,
   now = new Date(),
   hydrateNoticeId?: string | null,
-): Promise<{
-  notices: Notice[];
-  fromCrawl: boolean;
-  crawledCount: number;
-}> {
+): Promise<InitialBoardSlice> {
   const kw = query.trim();
-  if (!kw) return loadNoticeSummaries(now, hydrateNoticeId);
+  if (!kw) {
+    const res = await loadNoticeSummaries(now, hydrateNoticeId);
+    return {
+      notices: res.notices,
+      totalCount: res.notices.length,
+      categoryCounts: computeCategoryCounts(res.notices),
+      partial: false,
+      fromCrawl: res.fromCrawl,
+      crawledCount: res.crawledCount,
+    };
+  }
 
   const bundle = await getCachedBundle(now);
   const kwLower = kw.toLowerCase();
@@ -443,8 +563,9 @@ export async function searchNoticeSummaries(
       return bundle.notices[idx];
     }
     const full = bundle.notices[idx];
+    const extraSnippet = buildSearchSnippet(full);
     const fullMatched =
-      matchesQuery(full, kw) ||
+      matchesQuery(full, kw, extraSnippet) ||
       full.paragraphs.some((p) => p.toLowerCase().includes(kwLower));
     if (fullMatched && !matchesQuery(sum, kw)) {
       return {
@@ -457,6 +578,9 @@ export async function searchNoticeSummaries(
 
   return {
     notices,
+    totalCount: bundle.summaries.length,
+    categoryCounts: computeCategoryCounts(bundle.summaries),
+    partial: false,
     fromCrawl: bundle.fromCrawl,
     crawledCount: bundle.crawledCount,
   };

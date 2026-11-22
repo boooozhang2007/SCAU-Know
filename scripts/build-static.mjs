@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * 独立静态编译脚本（方案 B：公网纯静态 CDN `./out/` + 本地/内网私有后台）：
- *   1. 导出精简摘要 `notices-summary.json` 与分片详情 `details/<id>.json` 至 `public/static-data/`
- *   2. 仅提取通知实际引用的封面与配图，通过 `sharp` 生成 w640/w1200 WebP 缩略图至 `.static-build/public/media/thumbs/`
+ *   1. 导出精简摘要 `notices-summary.json`、`search-index.json` 与分片详情 `details/<id>.json` 至 `public/static-data/`
+ *   2. 仅提取通知实际引用的封面与配图，通过 `sharp` 生成 w480/w1200 WebP 缩略图至 `.static-build/public/media/thumbs/`
  *   3. 自动剔除服务端管理路由与状态页面（`src/app/api`、`src/app/admin`、`src/app/sources`）
  *   4. 将全部页面切换为 `force-static` 并输出紧凑纯静态站点到 `./out/`
  */
@@ -81,7 +81,7 @@ async function ensureCachedWebpThumb(srcPath, cachePath, width) {
   const out = await sharp(orig, { failOn: "none" })
     .rotate()
     .resize({ width, withoutEnlargement: true })
-    .webp({ quality: 78, effort: 4 })
+    .webp({ quality: width <= 480 ? 72 : 78, effort: 4 })
     .toBuffer();
   await fsp.mkdir(path.dirname(cachePath), { recursive: true });
   const tmp = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
@@ -95,8 +95,8 @@ async function prepareStaticMedia(noticesPath, stageRoot) {
   const raw = await fsp.readFile(noticesPath, "utf8");
   const notices = JSON.parse(raw);
 
-  const jobs = new Map(); // relKey -> { ref, widths: Set<640 | 1200> }
-  const addRef = (url, needW640) => {
+  const jobs = new Map(); // relKey -> { ref, widths: Set<480 | 1200> }
+  const addRef = (url, needW480) => {
     const ref = parseLocalMediaRef(url);
     if (!ref) return;
     const key = `${ref.dir}/${ref.file}`;
@@ -105,7 +105,7 @@ async function prepareStaticMedia(noticesPath, stageRoot) {
       entry = { ref, widths: new Set([1200]) };
       jobs.set(key, entry);
     }
-    if (needW640) entry.widths.add(640);
+    if (needW480) entry.widths.add(480);
   };
 
   for (const n of notices) {
