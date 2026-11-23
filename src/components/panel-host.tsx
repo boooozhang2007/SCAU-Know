@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -8,10 +8,12 @@ import {
   CalendarDays,
   ChartColumn,
   Check,
+  Copy,
   Database,
   ExternalLink,
   Info,
   LibraryBig,
+  MessageCircle,
   MessageCirclePlus,
   Search,
   Send,
@@ -35,6 +37,9 @@ export interface StatsData {
   total: number;
   activityCount: number;
   infoCount: number;
+  importantCount: number;
+  webCount: number;
+  wechatCount: number;
   noticeTotal: number;
   days: { label: string; value: number }[];
 }
@@ -49,33 +54,6 @@ interface GuestMessage {
 }
 
 const MSG_KEY = "scau-know-guestbook-v1";
-
-const SEED_MESSAGES: GuestMessage[] = [
-  {
-    id: "seed-1",
-    author: "数信院同学",
-    body: "希望能把数学与信息学院和人工智能与低空技术学院的学术报告同步进活动日历，经常错过报告时间！",
-    createdAt: "2026-11-20 14:22",
-    status: "done",
-    reply: "已优化报告时间与地点解析，现已自动同步到「活动日历」并支持按学科筛选。",
-  },
-  {
-    id: "seed-2",
-    author: "匿名华农同学",
-    body: "建议卡片来源不要全部显示成「华南农业大学...」，改成学院简称会清爽很多～",
-    createdAt: "2026-11-19 21:08",
-    status: "done",
-    reply: "已上线简称映射，卡片展示清晰简称，详情弹层与来源目录保留官方全称。",
-  },
-  {
-    id: "seed-3",
-    author: "五山常驻选手",
-    body: "期待后续接入华农就业指导中心宣讲会接口与紫荆校园公众号文章聚合！",
-    createdAt: "2026-11-18 11:35",
-    status: "working",
-    reply: "已在数据源中预留公众号 RSS 与就业中心接口适配，持续推进中。",
-  },
-];
 
 export function PanelHost({
   panel,
@@ -197,8 +175,8 @@ function InfoPanel({
 
         <p className="panel-note">
           {en
-            ? "Independent student-oriented portal for SCAU public campus feeds. Standard green #007848 follows the 115th anniversary SCAU VIS."
-            : "本站点聚合华南农业大学各学院、职能部门及教辅单位官网公开通知，标准绿 #007848 取自 2024 年 115 周年校庆视觉形象识别系统。"}
+            ? "Independent student-oriented portal for SCAU public campus websites and WeChat official accounts. Standard green #007848 follows the 115th anniversary SCAU VIS."
+            : "本站点聚合华南农业大学各学院、职能部门、教辅单位官网及校园微信公众号公开通知，标准绿 #007848 取自 2024 年 115 周年校庆视觉形象识别系统。"}
         </p>
 
         {!STATIC_MODE && (
@@ -212,6 +190,39 @@ function InfoPanel({
       </div>
     </>
   );
+}
+
+type SourcesTabKey = "all" | "wechat" | "college" | "department" | "service" | "starred";
+
+const SOURCES_TAB_ORDER: readonly SourcesTabKey[] = [
+  "all",
+  "wechat",
+  "college",
+  "department",
+  "service",
+  "starred",
+];
+
+function isWechatCapable(s: SourceRef): boolean {
+  return s.kind === "wechat" || s.wechatCount > 0 || Boolean(s.wechat);
+}
+
+function legacyCopyText(text: string): boolean {
+  try {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.cssText = "position:fixed;inset-block-start:0;opacity:0";
+    document.body.append(field);
+    field.select();
+    try {
+      return document.execCommand("copy");
+    } finally {
+      field.remove();
+    }
+  } catch {
+    return false;
+  }
 }
 
 function SourcesPanel({
@@ -228,30 +239,170 @@ function SourcesPanel({
   const router = useRouter();
   const { isStarred, toggleStar, starAll, clearStars, starred } = usePreferences();
   const [kw, setKw] = useState("");
-  const [tab, setTab] = useState<"all" | "college" | "department" | "service" | "starred">("all");
+  const [tab, setTab] = useState<SourcesTabKey>("all");
+  const [copyFeedback, setCopyFeedback] = useState<{
+    key: string;
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  const tabRefs = useRef<Partial<Record<SourcesTabKey, HTMLButtonElement | null>>>({});
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCopyMsgRef = useRef("");
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const countsByTab = useMemo(() => {
+    let wechat = 0;
+    let college = 0;
+    let department = 0;
+    let service = 0;
+    for (const s of sources) {
+      if (isWechatCapable(s)) wechat += 1;
+      if (s.kind === "college") college += 1;
+      else if (s.kind === "department") department += 1;
+      else if (s.kind === "service") service += 1;
+    }
+    return { wechat, college, department, service };
+  }, [sources]);
 
   const filtered = useMemo(() => {
     const q = kw.trim().toLowerCase();
-    return sources.filter((s) => {
+    const list = sources.filter((s) => {
       if (tab === "starred" && !isStarred(s.name)) return false;
-      if (tab !== "all" && tab !== "starred" && s.kind !== tab) return false;
+      if (tab === "wechat" && !isWechatCapable(s)) return false;
+      if (
+        tab !== "all" &&
+        tab !== "starred" &&
+        tab !== "wechat" &&
+        s.kind !== tab
+      ) {
+        return false;
+      }
       if (q) {
+        if (
+          (q === "公众号" || q === "微信" || q === "微信公众号" || q === "wechat") &&
+          isWechatCapable(s)
+        ) {
+          return true;
+        }
         return (
           s.name.toLowerCase().includes(q) ||
-          s.shortName.toLowerCase().includes(q)
+          s.shortName.toLowerCase().includes(q) ||
+          Boolean(s.wechat?.toLowerCase().includes(q)) ||
+          Boolean(s.wechatId?.toLowerCase().includes(q)) ||
+          Boolean(s.wechatAccounts?.some((a) => a.toLowerCase().includes(q))) ||
+          Boolean(s.wechatIds?.some((id) => id.toLowerCase().includes(q)))
         );
       }
       return true;
     });
+
+    if (tab === "wechat") {
+      return [...list].sort((a, b) => {
+        if (b.wechatCount !== a.wechatCount) return b.wechatCount - a.wechatCount;
+        const aPure = a.kind === "wechat" ? 1 : 0;
+        const bPure = b.kind === "wechat" ? 1 : 0;
+        if (bPure !== aPure) return bPure - aPure;
+        if (b.count !== a.count) return b.count - a.count;
+        return a.name.localeCompare(b.name, "zh");
+      });
+    }
+    return list;
   }, [sources, kw, tab, isStarred]);
 
-  const TABS: { key: typeof tab; label: string; labelEn: string }[] = [
+  const TABS: { key: SourcesTabKey; label: string; labelEn: string }[] = [
     { key: "all", label: `全部 ${sources.length}`, labelEn: `All (${sources.length})` },
-    { key: "college", label: "教学单位", labelEn: "Colleges" },
-    { key: "department", label: "机关部处", labelEn: "Offices" },
-    { key: "service", label: "教辅服务", labelEn: "Services" },
-    { key: "starred", label: `已星标 ${starred.length}`, labelEn: `Starred (${starred.length})` },
+    {
+      key: "wechat",
+      label: `公众号 ${countsByTab.wechat}`,
+      labelEn: `WeChat (${countsByTab.wechat})`,
+    },
+    {
+      key: "college",
+      label: `教学单位 ${countsByTab.college}`,
+      labelEn: `Colleges (${countsByTab.college})`,
+    },
+    {
+      key: "department",
+      label: `机关部处 ${countsByTab.department}`,
+      labelEn: `Offices (${countsByTab.department})`,
+    },
+    {
+      key: "service",
+      label: `教辅服务 ${countsByTab.service}`,
+      labelEn: `Services (${countsByTab.service})`,
+    },
+    {
+      key: "starred",
+      label: `已星标 ${starred.length}`,
+      labelEn: `Starred (${starred.length})`,
+    },
   ];
+
+  const selectTab = useCallback((next: SourcesTabKey, moveFocus = false) => {
+    setTab(next);
+    const el = tabRefs.current[next];
+    if (el) {
+      if (moveFocus) el.focus();
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, []);
+
+  const handleTabKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLButtonElement>, idx: number) => {
+      let nextIdx = -1;
+      if (e.key === "ArrowRight") nextIdx = (idx + 1) % SOURCES_TAB_ORDER.length;
+      else if (e.key === "ArrowLeft") {
+        nextIdx = (idx - 1 + SOURCES_TAB_ORDER.length) % SOURCES_TAB_ORDER.length;
+      } else if (e.key === "Home") nextIdx = 0;
+      else if (e.key === "End") nextIdx = SOURCES_TAB_ORDER.length - 1;
+      if (nextIdx >= 0) {
+        e.preventDefault();
+        selectTab(SOURCES_TAB_ORDER[nextIdx], true);
+      }
+    },
+    [selectTab],
+  );
+
+  const copyWechat = useCallback(
+    async (sourceKey: string, value: string, isWechatId: boolean) => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      let ok = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+          ok = true;
+        } else {
+          ok = legacyCopyText(value);
+        }
+      } catch {
+        ok = legacyCopyText(value);
+      }
+
+      let message = ok
+        ? en
+          ? `Copied ${value}`
+          : isWechatId
+            ? `已复制微信号「${value}」`
+            : `已复制公众号「${value}」`
+        : en
+          ? "Copy failed"
+          : "复制失败，请手动搜索公众号";
+      if (message === lastCopyMsgRef.current) message += "\u00A0";
+      lastCopyMsgRef.current = message;
+
+      setCopyFeedback({ key: sourceKey, ok, message });
+      copyTimerRef.current = setTimeout(() => {
+        setCopyFeedback(null);
+      }, 2200);
+    },
+    [en],
+  );
 
   return (
     <>
@@ -276,8 +427,8 @@ function SourcesPanel({
       <div className="modal-body">
         <p className="panel-lede">
           {en
-            ? "Star colleges or departments you care about to prioritize them on the board and calendar."
-            : "星标常用学院或职能部门，即可在通知墙和活动日历中优先查看或只看星标。"}
+            ? "Browse SCAU websites and WeChat official accounts. Star your favorites to prioritize them on the board and calendar."
+            : "收录华农各学院、部处官网及校园微信公众号，星标常用来源即可在通知墙和活动日历中优先查看或只看星标。"}
         </p>
 
         <div className="sources-toolbar">
@@ -287,7 +438,11 @@ function SourcesPanel({
               type="search"
               value={kw}
               onChange={(e) => setKw(e.target.value)}
-              placeholder={en ? "Search colleges or offices..." : "搜索学院、部处或简称..."}
+              placeholder={
+                en
+                  ? "Search colleges, offices, or WeChat accounts..."
+                  : "搜索学院、部处、公众号或微信号..."
+              }
               aria-label={en ? "Filter sources" : "搜索信息来源"}
             />
             {kw && (
@@ -323,83 +478,235 @@ function SourcesPanel({
           </div>
         </div>
 
-        <div className="sources-tabs" role="tablist">
-          {TABS.map((t) => (
+        <div
+          className="sources-tabs"
+          role="tablist"
+          aria-label={en ? "Filter sources by category" : "按分类筛选信息来源"}
+        >
+          {TABS.map((t, idx) => (
             <button
               key={t.key}
+              ref={(el) => {
+                tabRefs.current[t.key] = el;
+              }}
+              id={`sources-tab-${t.key}`}
               type="button"
               role="tab"
               className="sources-tab"
+              tabIndex={tab === t.key ? 0 : -1}
               aria-selected={tab === t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => selectTab(t.key)}
+              onKeyDown={(e) => handleTabKeyDown(e, idx)}
             >
               {en ? t.labelEn : t.label}
             </button>
           ))}
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="sources-empty">
-            {tab === "starred"
-              ? en
-                ? "No starred sources yet. Click the star button next to any source."
-                : "暂无星标来源，点击任意单位右侧的星标按钮即可添加。"
-              : en
-                ? "No matching sources."
-                : "未找到匹配的发布单位。"}
+        <div
+          role="tabpanel"
+          aria-labelledby={`sources-tab-${tab}`}
+        >
+          {/* 独立于复制按钮的 live region，使用 sticky 浮条确保滚动到任意位置都能看到并向读屏软件播报 */}
+          <div
+            className="sources-copy-status"
+            role="status"
+            data-visible={copyFeedback ? "true" : undefined}
+            data-failed={copyFeedback && !copyFeedback.ok ? "true" : undefined}
+          >
+            {copyFeedback?.message ?? ""}
           </div>
-        ) : (
-          <ul className="source-list">
-            {filtered.map((s) => {
-              const star = isStarred(s.name);
-              return (
-                <li key={s.name} className="source-item" data-tone={s.tone}>
-                  <span className="source-item-dot" aria-hidden="true" />
-                  <div className="source-item-info">
-                    <span className="source-item-name" title={s.name}>
-                      {s.shortName}
+          {filtered.length === 0 ? (
+            <div className="sources-empty">
+              {tab === "starred"
+                ? en
+                  ? "No starred sources yet. Click the star button next to any source."
+                  : "暂无星标来源，点击任意单位或公众号右侧的星标按钮即可添加。"
+                : en
+                  ? "No matching sources."
+                  : "未找到匹配的发布单位或公众号。"}
+            </div>
+          ) : (
+            <ul className="source-list">
+              {filtered.map((s) => {
+                const star = isStarred(s.name);
+                const hasWx = isWechatCapable(s);
+                const isPureWx = s.kind === "wechat";
+                const copyValue = s.wechatId || s.wechat || s.name;
+                const copyIsId = Boolean(s.wechatId);
+                const showCopyAction = hasWx && (!s.url || tab === "wechat");
+                const copied =
+                  copyFeedback?.key === s.name && copyFeedback.ok;
+                const copyFailed =
+                  copyFeedback?.key === s.name && !copyFeedback.ok;
+
+                const linkedNames = s.wechatAccounts ?? (s.wechat ? [s.wechat] : []);
+                const linkedTitle = linkedNames.length
+                  ? `${en ? "WeChat: " : "关联公众号："}${linkedNames.join("、")}${
+                      s.wechatId ? ` (@${s.wechatId})` : ""
+                    }`
+                  : undefined;
+
+                let subtitle = s.name;
+                if (isPureWx) {
+                  const parts = [en ? "WeChat Official Account" : "微信公众号"];
+                  if (s.wechatId) parts.push(`@${s.wechatId}`);
+                  if (s.name !== s.shortName) parts.push(s.name);
+                  subtitle = parts.join(" · ");
+                } else if (tab === "wechat" && linkedNames.length > 0) {
+                  const preview = linkedNames.slice(0, 2).join(" / ");
+                  const more =
+                    linkedNames.length > 2
+                      ? en
+                        ? ` +${linkedNames.length - 2}`
+                        : ` 等${linkedNames.length}个号`
+                      : "";
+                  const idPart = s.wechatId ? ` · @${s.wechatId}` : "";
+                  subtitle = `${en ? "WeChat: " : "公众号："}${preview}${more}${idPart}`;
+                } else if (hasWx) {
+                  const parts = [s.name];
+                  if (s.wechatCount > 0) {
+                    parts.push(
+                      en
+                        ? `${s.wechatCount} from WeChat`
+                        : `含公众号 ${s.wechatCount} 条`,
+                    );
+                  } else if (s.wechatId) {
+                    parts.push(`@${s.wechatId}`);
+                  }
+                  subtitle = parts.join(" · ");
+                }
+
+                const displayCount =
+                  tab === "wechat" && !isPureWx && s.wechatCount > 0
+                    ? en
+                      ? `${s.wechatCount} wx`
+                      : `${s.wechatCount} 篇`
+                    : s.count > 0
+                      ? en
+                        ? `${s.count}`
+                        : `${s.count} 条`
+                      : en
+                        ? "Pending"
+                        : "待收录";
+
+                return (
+                  <li
+                    key={s.name}
+                    className="source-item"
+                    data-tone={s.tone}
+                    data-wechat={isPureWx ? "true" : undefined}
+                  >
+                    <span className="source-item-dot" aria-hidden="true" />
+                    <div className="source-item-info">
+                      <div className="source-item-head">
+                        <span className="source-item-name" title={s.name}>
+                          {s.shortName}
+                        </span>
+                        {hasWx && (
+                          <span
+                            className={`source-wechat-pill${isPureWx ? "" : " is-dual"}`}
+                            title={linkedTitle}
+                          >
+                            <MessageCircle aria-hidden="true" />
+                            <span>
+                              {isPureWx
+                                ? en
+                                  ? "WeChat"
+                                  : "公众号"
+                                : en
+                                  ? "+WeChat"
+                                  : "含公众号"}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                      <span className="source-item-full" title={subtitle}>
+                        {subtitle}
+                      </span>
+                    </div>
+                    <span
+                      className="source-item-count"
+                      data-empty={s.count === 0 ? "true" : undefined}
+                      title={
+                        tab === "wechat" && !isPureWx && s.count > s.wechatCount
+                          ? en
+                            ? `${s.count} total notices`
+                            : `共 ${s.count} 条（官网 ${s.webCount} + 公众号 ${s.wechatCount}）`
+                          : undefined
+                      }
+                    >
+                      {displayCount}
                     </span>
-                    <span className="source-item-full">{s.name}</span>
-                  </div>
-                  <span className="source-item-count">
-                    {en ? `${s.count}` : `${s.count} 条`}
-                  </span>
-                  <button
-                    type="button"
-                    className="source-row-btn"
-                    onClick={() => {
-                      onClose();
-                      router.push(`/?source=${encodeURIComponent(s.name)}`);
-                    }}
-                  >
-                    {en ? "View" : "查看"}
-                  </button>
-                  <button
-                    type="button"
-                    className="source-row-star"
-                    data-starred={star ? "true" : undefined}
-                    aria-pressed={star}
-                    aria-label={star ? `取消星标 ${s.shortName}` : `星标 ${s.shortName}`}
-                    title={star ? (en ? "Unstar" : "取消星标") : en ? "Star" : "星标"}
-                    onClick={() => toggleStar(s.name)}
-                  >
-                    <Star />
-                  </button>
-                  <a
-                    className="source-row-ext"
-                    href={s.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    aria-label={en ? `Visit ${s.name}` : `访问 ${s.name} 官网`}
-                    title={en ? "Open official site" : "打开官网"}
-                  >
-                    <ExternalLink />
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                    {s.count > 0 ? (
+                      <button
+                        type="button"
+                        className="source-row-btn"
+                        onClick={() => {
+                          onClose();
+                          router.push(`/?source=${encodeURIComponent(s.name)}`);
+                        }}
+                      >
+                        {en ? "View" : "查看"}
+                      </button>
+                    ) : (
+                      <span className="source-row-btn is-muted" aria-disabled="true">
+                        {en ? "None" : "暂无"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="source-row-star"
+                      data-starred={star ? "true" : undefined}
+                      aria-pressed={star}
+                      aria-label={star ? `取消星标 ${s.shortName}` : `星标 ${s.shortName}`}
+                      title={star ? (en ? "Unstar" : "取消星标") : en ? "Star" : "星标"}
+                      onClick={() => toggleStar(s.name)}
+                    >
+                      <Star />
+                    </button>
+                    {showCopyAction ? (
+                      <button
+                        type="button"
+                        className="source-row-copy"
+                        data-copied={copied ? "true" : undefined}
+                        data-failed={copyFailed ? "true" : undefined}
+                        aria-label={
+                          en
+                            ? `Copy WeChat ${copyValue}`
+                            : copyIsId
+                              ? `复制微信号 ${copyValue}`
+                              : `复制公众号名 ${copyValue}`
+                        }
+                        title={
+                          en
+                            ? `Copy WeChat: ${copyValue}`
+                            : copyIsId
+                              ? `复制微信号：${copyValue}`
+                              : `复制公众号名：${copyValue}`
+                        }
+                        onClick={() => void copyWechat(s.name, copyValue, copyIsId)}
+                      >
+                        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                      </button>
+                    ) : s.url ? (
+                      <a
+                        className="source-row-ext"
+                        href={s.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        aria-label={en ? `Visit ${s.name}` : `访问 ${s.name} 官网`}
+                        title={en ? "Open official site" : "打开官网"}
+                      >
+                        <ExternalLink aria-hidden="true" />
+                      </a>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         {!STATIC_MODE && (
           <div className="modal-foot-actions">
@@ -427,6 +734,7 @@ function StatsPanel({
   titleId: string;
 }) {
   const max = Math.max(...stats.days.map((d) => d.value), 1);
+  const pct = (n: number) => Math.round((n / Math.max(stats.noticeTotal, 1)) * 100);
 
   return (
     <>
@@ -434,7 +742,7 @@ function StatsPanel({
         <div className="modal-title-row">
           <ChartColumn className="modal-title-icon" aria-hidden="true" />
           <h2 id={titleId} className="modal-title">
-            {en ? "Site Statistics" : "访问量与数据概览"}
+            {en ? "Data Overview" : "数据概览"}
           </h2>
         </div>
         <button
@@ -451,7 +759,7 @@ function StatsPanel({
         <div className="stat-cards">
           <div className="stat-card">
             <span className="stat-label">
-              <CalendarDays /> {en ? "Today" : "今日访问量"}
+              <CalendarDays /> {en ? "Today" : "今日收录"}
             </span>
             <strong className="stat-value">
               {stats.today.toLocaleString("zh-CN")}
@@ -459,7 +767,7 @@ function StatsPanel({
           </div>
           <div className="stat-card">
             <span className="stat-label">
-              <TrendingUp /> {en ? "Last 7 Days" : "近 7 天"}
+              <TrendingUp /> {en ? "Last 7 Days" : "近 7 天收录"}
             </span>
             <strong className="stat-value">
               {stats.week.toLocaleString("zh-CN")}
@@ -467,7 +775,7 @@ function StatsPanel({
           </div>
           <div className="stat-card">
             <span className="stat-label">
-              <ChartColumn /> {en ? "Total" : "累计访问量"}
+              <ChartColumn /> {en ? "Total Indexed" : "累计收录"}
             </span>
             <strong className="stat-value">
               {stats.total.toLocaleString("zh-CN")}
@@ -476,19 +784,22 @@ function StatsPanel({
         </div>
 
         <div className="stat-section-head">
-          <strong>{en ? "7-Day Trend" : "近 7 天访问趋势"}</strong>
-          <span>{en ? "Demo telemetry" : "演示统计"}</span>
+          <strong>{en ? "7-Day Publishing Trend" : "近 7 天发布趋势"}</strong>
+          <span>{en ? "Live index" : "实时统计"}</span>
         </div>
 
-        <div className="stat-chart" aria-label={en ? "7-day visits trend" : "近 7 日访问趋势"}>
+        <div className="stat-chart" aria-label={en ? "7-day publishing trend" : "近 7 日发布趋势"}>
           {stats.days.map((d) => (
             <div key={d.label} className="stat-bar-item">
               <span className="stat-bar-num">{d.value.toLocaleString("zh-CN")}</span>
               <div className="stat-bar-track">
                 <div
                   className="stat-bar-fill"
-                  style={{ height: `${Math.max(12, (d.value / max) * 100)}%` }}
-                  title={`${d.label}：${d.value}`}
+                  style={{
+                    height: d.value > 0 ? `${Math.max(12, (d.value / max) * 100)}%` : "4%",
+                    opacity: d.value > 0 ? 1 : 0.3,
+                  }}
+                  title={`${d.label}：${d.value} 条`}
                 />
               </div>
               <span className="stat-bar-label">{d.label}</span>
@@ -503,7 +814,7 @@ function StatsPanel({
           <table className="stat-table">
             <thead>
               <tr>
-                <th>{en ? "Group" : "板块"}</th>
+                <th>{en ? "Group" : "板块 / 渠道"}</th>
                 <th>{en ? "Items" : "收录条数"}</th>
                 <th>{en ? "Share" : "占比"}</th>
               </tr>
@@ -512,16 +823,27 @@ function StatsPanel({
               <tr>
                 <td>{en ? "Events" : "活动类"}</td>
                 <td className="stat-num-cell">{stats.activityCount}</td>
-                <td className="stat-num-cell">
-                  {Math.round((stats.activityCount / Math.max(stats.noticeTotal, 1)) * 100)}%
-                </td>
+                <td className="stat-num-cell">{pct(stats.activityCount)}%</td>
               </tr>
               <tr>
                 <td>{en ? "Notices" : "通知类"}</td>
                 <td className="stat-num-cell">{stats.infoCount}</td>
-                <td className="stat-num-cell">
-                  {Math.round((stats.infoCount / Math.max(stats.noticeTotal, 1)) * 100)}%
-                </td>
+                <td className="stat-num-cell">{pct(stats.infoCount)}%</td>
+              </tr>
+              <tr>
+                <td>{en ? "Important" : "重要通知"}</td>
+                <td className="stat-num-cell">{stats.importantCount}</td>
+                <td className="stat-num-cell">{pct(stats.importantCount)}%</td>
+              </tr>
+              <tr>
+                <td>{en ? "Official Websites" : "官网来源"}</td>
+                <td className="stat-num-cell">{stats.webCount}</td>
+                <td className="stat-num-cell">{pct(stats.webCount)}%</td>
+              </tr>
+              <tr>
+                <td>{en ? "WeChat Official Accounts" : "微信公众号"}</td>
+                <td className="stat-num-cell">{stats.wechatCount}</td>
+                <td className="stat-num-cell">{pct(stats.wechatCount)}%</td>
               </tr>
               <tr className="stat-row-total">
                 <td>{en ? "Total" : "总计"}</td>
@@ -548,15 +870,15 @@ function MessagePanel({
   const [nickname, setNickname] = useState("");
   const [body, setBody] = useState("");
   const [justSubmitted, setJustSubmitted] = useState(false);
-  const [messages, setMessages] = useState<GuestMessage[]>(SEED_MESSAGES);
+  const [messages, setMessages] = useState<GuestMessage[]>([]);
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(MSG_KEY);
       if (raw) {
         const saved = JSON.parse(raw) as GuestMessage[];
-        if (Array.isArray(saved) && saved.length > 0) {
-          setMessages([...saved, ...SEED_MESSAGES]);
+        if (Array.isArray(saved)) {
+          setMessages(saved.filter((m) => m && typeof m.id === "string" && !m.id.startsWith("seed-")));
         }
       }
     } catch {
@@ -581,9 +903,8 @@ function MessagePanel({
       status: "pending",
     };
 
-    const userEntries = messages.filter((m) => m.id.startsWith("user-"));
-    const nextUser = [entry, ...userEntries];
-    setMessages([entry, ...messages]);
+    const nextUser = [entry, ...messages];
+    setMessages(nextUser);
     try {
       window.localStorage.setItem(MSG_KEY, JSON.stringify(nextUser));
     } catch {
@@ -685,30 +1006,38 @@ function MessagePanel({
 
         <div className="guestbook-section">
           <div className="guestbook-head">
-            <strong>{en ? "Community Notes" : "大家的留言"}</strong>
+            <strong>{en ? "Your Messages" : "留言记录"}</strong>
             <span className="modal-count-pill">{messages.length}</span>
           </div>
 
-          <ul className="guestbook-list">
-            {messages.map((m) => (
-              <li key={m.id} className="guestbook-item">
-                <div className="guestbook-item-top">
-                  <span className="guestbook-author">{m.author}</span>
-                  <time className="guestbook-time">{m.createdAt}</time>
-                  <span className="guestbook-status" data-status={m.status}>
-                    {en ? STATUS_TEXT[m.status].en : STATUS_TEXT[m.status].zh}
-                  </span>
-                </div>
-                <p className="guestbook-body">{m.body}</p>
-                {m.reply && (
-                  <p className="guestbook-reply">
-                    <strong>{en ? "Reply: " : "开发者回复："}</strong>
-                    {m.reply}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
+          {messages.length === 0 ? (
+            <div className="sources-empty">
+              {en
+                ? "No messages yet. Share your feedback or suggest a SCAU source above."
+                : "暂无留言，欢迎在上方提交问题反馈或推荐华农学院/公众号信息源。"}
+            </div>
+          ) : (
+            <ul className="guestbook-list">
+              {messages.map((m) => (
+                <li key={m.id} className="guestbook-item">
+                  <div className="guestbook-item-top">
+                    <span className="guestbook-author">{m.author}</span>
+                    <time className="guestbook-time">{m.createdAt}</time>
+                    <span className="guestbook-status" data-status={m.status}>
+                      {en ? STATUS_TEXT[m.status].en : STATUS_TEXT[m.status].zh}
+                    </span>
+                  </div>
+                  <p className="guestbook-body">{m.body}</p>
+                  {m.reply && (
+                    <p className="guestbook-reply">
+                      <strong>{en ? "Reply: " : "开发者回复："}</strong>
+                      {m.reply}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </>

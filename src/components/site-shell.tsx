@@ -19,13 +19,15 @@ import { CategoryNav } from "@/components/category-nav";
 import { NoticeBoard } from "@/components/notice-board";
 import type { PanelKind, StatsData } from "@/components/panel-host";
 import type { Notice, SourceRef } from "@/lib/types";
-import type { CategoryIntent } from "@/lib/site";
-import { countBySource, toCstParts } from "@/lib/format";
+import { CATEGORY_MAP, type CategoryIntent } from "@/lib/site";
+import { toCstParts } from "@/lib/format";
+import { STANDALONE_WECHAT_ACCOUNTS } from "@/lib/crawl/wechat-accounts";
 import {
+  isWechatNotice,
   kindOfSource,
+  officialWebsiteUrl,
   shortSourceName,
-  sourceUrl,
-  wechatOfSource,
+  wechatAccountsOfSource,
 } from "@/lib/sources";
 import { usePreferences } from "@/lib/preferences";
 
@@ -37,6 +39,8 @@ const PanelHost = dynamic(
 interface LiveNoticesContextValue {
   notices: Notice[];
   now: string;
+  syncing: boolean;
+  refresh: () => void;
 }
 
 interface LowPriorityRequestInit extends RequestInit {
@@ -78,32 +82,64 @@ export function useLiveNotices(
   fallbackNow: string,
 ): LiveNoticesContextValue {
   const ctx = useContext(LiveNoticesContext);
-  return ctx ?? { notices: fallbackNotices, now: fallbackNow };
+  return (
+    ctx ?? {
+      notices: fallbackNotices,
+      now: fallbackNow,
+      syncing: false,
+      refresh: () => {},
+    }
+  );
 }
 
-/** 演示用访问量：以条目总量为基数派生，保证 SSR 与客户端水合一致 */
+/** 基于库内真实通知计算数据概览（无任何演示/虚拟访问量），保证 SSR 与客户端水合一致 */
 function buildStats(notices: Notice[], nowIso: string): StatsData {
   const totalNotices = notices.length;
-  const activityCount = notices.filter((n) => n.cluster === "activity").length;
-  const infoCount = totalNotices - activityCount;
-  const seed = totalNotices * 37 + 11;
-  const nowMs = new Date(nowIso).getTime();
-  const pad = (n: number) => String(n).padStart(2, "0");
+  let activityCount = 0;
+  let wechatCount = 0;
+  let importantCount = 0;
 
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const dayKeyOf = (iso: string): string => {
+    const p = toCstParts(iso);
+    return `${p.y}-${pad(p.m)}-${pad(p.d)}`;
+  };
+
+  const nowMs = Date.parse(nowIso) || Date.now();
+  const buckets = Array.from({ length: 7 }, (_, i) => {
     const dtIso = new Date(nowMs - (6 - i) * 86400000).toISOString();
     const p = toCstParts(dtIso);
-    const val = Math.round(420 + ((seed * (i + 5) * 17) % 680));
-    return { label: `${pad(p.m)}/${pad(p.d)}`, value: val };
+    return {
+      key: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
+      label: `${pad(p.m)}/${pad(p.d)}`,
+      value: 0,
+    };
   });
+  const bucketMap = new Map(buckets.map((b) => [b.key, b]));
 
+  for (const n of notices) {
+    if (n.cluster === "activity") activityCount += 1;
+    if (isWechatNotice(n)) wechatCount += 1;
+    if (n.important || (n.importance ?? n.ai?.importance ?? 0) >= 4) importantCount += 1;
+    const b = bucketMap.get(dayKeyOf(n.publishedAt));
+    if (b) b.value += 1;
+  }
+
+  const infoCount = totalNotices - activityCount;
+  const webCount = totalNotices - wechatCount;
+  const days = buckets.map(({ label, value }) => ({ label, value }));
+  const today = days[days.length - 1]?.value ?? 0;
   const week = days.reduce((s, d) => s + d.value, 0);
+
   return {
-    today: days[days.length - 1].value,
+    today,
     week,
-    total: week * 19 + seed * 3,
+    total: totalNotices,
     activityCount,
     infoCount,
+    importantCount,
+    webCount,
+    wechatCount,
     noticeTotal: totalNotices,
     days,
   };
@@ -158,6 +194,7 @@ export function SiteShell({
 
   const [liveNotices, setLiveNotices] = useState<Notice[]>(notices);
   const [liveNow, setLiveNow] = useState<string>(now);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>(now);
   const [isPartial, setIsPartial] = useState<boolean>(Boolean(initialPartial));
   const [loadingFull, setLoadingFull] = useState<boolean>(false);
   const [searchIndex, setSearchIndex] = useState<Record<string, string> | null>(
@@ -388,15 +425,13 @@ export function SiteShell({
         }
 
         if (metaUpdatedAt) {
-          setLiveNow((prev) => {
-            const prevMs = new Date(prev).getTime();
-            const nextMs = new Date(metaUpdatedAt).getTime();
-            if (!Number.isNaN(nextMs) && (Number.isNaN(prevMs) || nextMs > prevMs)) {
-              return metaUpdatedAt;
-            }
-            return prev;
-          });
+          setLastSyncedAt(metaUpdatedAt);
         }
+        // liveNow 始终保持真实当前时刻（绝不回退到历史抓取时间，以免「今天/昨天」和日历「今天」错位）
+        setLiveNow((prev) => {
+          const curIso = new Date().toISOString();
+          return Date.parse(curIso) > (Date.parse(prev) || 0) ? curIso : prev;
+        });
 
         const shouldFetchFull =
           forceFull || versionChanged || (isFirst && snapshotBehind);
@@ -449,7 +484,11 @@ export function SiteShell({
         isPartialRef.current = false;
         setLiveNotices(fetchedNotices);
         setIsPartial(false);
-        setLiveNow(nextNow);
+        if (nextNow) setLastSyncedAt(nextNow);
+        setLiveNow((prev) => {
+          const curIso = new Date().toISOString();
+          return Date.parse(curIso) > (Date.parse(prev) || 0) ? curIso : prev;
+        });
         currentIdsRef.current = new Set(fetchedNotices.map((n) => n.id));
         countRef.current = fetchedNotices.length;
         knownTotalRef.current = fetchedNotices.length;
@@ -570,31 +609,115 @@ export function SiteShell({
     isPartial && initialTotalCount ? initialTotalCount : liveNotices.length;
 
   const sources = useMemo<SourceRef[]>(() => {
-    const map = countBySource(liveNotices);
-    return [...map.entries()]
-      .map(([name, count]) => ({
-        name,
-        shortName: shortSourceName(name),
-        count,
-        tone: liveNotices.find((n) => n.source === name)?.tone ?? "leaf",
-        kind: kindOfSource(name),
-        url: sourceUrl(name),
-        wechat: wechatOfSource(name),
-      }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh"));
+    interface SourceAcc {
+      count: number;
+      webCount: number;
+      wechatCount: number;
+      tone: Notice["tone"];
+      latestWechatUrl?: string;
+      latestWechatMs: number;
+    }
+
+    const statsByName = new Map<string, SourceAcc>();
+    for (const n of liveNotices) {
+      const wx = isWechatNotice(n);
+      const pubMs = Date.parse(n.publishedAt) || 0;
+      const cur = statsByName.get(n.source);
+      if (!cur) {
+        statsByName.set(n.source, {
+          count: 1,
+          webCount: wx ? 0 : 1,
+          wechatCount: wx ? 1 : 0,
+          tone: n.tone,
+          latestWechatUrl: wx ? n.url : undefined,
+          latestWechatMs: wx ? pubMs : -1,
+        });
+      } else {
+        cur.count += 1;
+        if (wx) {
+          cur.wechatCount += 1;
+          if (pubMs >= cur.latestWechatMs) {
+            cur.latestWechatUrl = n.url;
+            cur.latestWechatMs = pubMs;
+          }
+        } else {
+          cur.webCount += 1;
+        }
+      }
+    }
+
+    // 合并已预置但当前窗口尚未拉取到文章的独立公众号源，方便在「信息来源」检索与提前星标
+    for (const acc of STANDALONE_WECHAT_ACCOUNTS) {
+      if (statsByName.has(acc.name)) continue;
+      const catTone = (acc.category ? CATEGORY_MAP.get(acc.category)?.tone : undefined) ?? "leaf";
+      statsByName.set(acc.name, {
+        count: 0,
+        webCount: 0,
+        wechatCount: 0,
+        tone: catTone,
+        latestWechatUrl: undefined,
+        latestWechatMs: -1,
+      });
+    }
+
+    return [...statsByName.entries()]
+      .map(([name, st]) => {
+        const linked = wechatAccountsOfSource(name);
+        const wechatAccounts = linked.map((a) => a.name);
+        const wechatIds = linked
+          .map((a) => a.wechatId)
+          .filter((id): id is string => Boolean(id));
+        const wechatOnly =
+          st.webCount === 0 && (st.wechatCount > 0 || linked.some((a) => !a.sourceId));
+        const kind = kindOfSource(name, wechatOnly);
+        const url = officialWebsiteUrl(name);
+        const wechat =
+          linked[0]?.name ?? (st.wechatCount > 0 || kind === "wechat" ? name : undefined);
+
+        return {
+          name,
+          shortName: shortSourceName(name),
+          count: st.count,
+          webCount: st.webCount,
+          wechatCount: st.wechatCount,
+          tone: st.tone,
+          kind,
+          url,
+          wechat,
+          wechatId: wechatIds[0],
+          wechatAccounts: wechatAccounts.length > 0 ? wechatAccounts : undefined,
+          wechatIds: wechatIds.length > 0 ? wechatIds : undefined,
+          latestWechatUrl: st.latestWechatUrl,
+        } satisfies SourceRef;
+      })
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          b.wechatCount - a.wechatCount ||
+          a.name.localeCompare(b.name, "zh"),
+      );
   }, [liveNotices]);
 
   const stats = useMemo(() => buildStats(liveNotices, liveNow), [liveNotices, liveNow]);
 
   const updatedLabel = useMemo(() => {
-    const p = toCstParts(liveNow);
+    const p = toCstParts(lastSyncedAt);
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${p.y}-${pad(p.m)}-${pad(p.d)} ${pad(p.hh)}:${pad(p.mm)}`;
-  }, [liveNow]);
+  }, [lastSyncedAt]);
+
+  const handleManualSync = useCallback(() => {
+    void performSync({ forceFull: true });
+  }, [performSync]);
 
   const contextVal = useMemo(
-    () => ({ notices: liveNotices, now: liveNow }),
-    [liveNotices, liveNow],
+    () => ({
+      notices: liveNotices,
+      now: liveNow,
+      syncing,
+      refresh: handleManualSync,
+    }),
+    [liveNotices, liveNow, syncing, handleManualSync],
   );
 
   return (

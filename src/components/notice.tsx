@@ -1,9 +1,9 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { CalendarClock, Check, Paperclip, Star } from "lucide-react";
+import { CalendarClock, Check, Clock, Paperclip, Star, Users } from "lucide-react";
 import type { Notice } from "@/lib/types";
-import { formatEventChip, meaningfulSummary } from "@/lib/format";
+import { formatDeadlineChip, formatEventChip, meaningfulSummary } from "@/lib/format";
 import { mediaThumbUrl } from "@/lib/media-url";
 import { shortSourceName } from "@/lib/sources";
 import { observeViewport } from "@/lib/viewport-observer";
@@ -32,22 +32,33 @@ export const NoticeCard = memo(function NoticeCard({
   const excerpt = meaningfulSummary(notice.title, notice.summary);
   const shortSrc = shortSourceName(notice.source);
   const eventChip = notice.startsAt ? formatEventChip(notice.startsAt, lang) : null;
+  const deadlineChip =
+    !eventChip && notice.registrationDeadline
+      ? formatDeadlineChip(notice.registrationDeadline, lang)
+      : null;
+  const audienceList = notice.audience ?? notice.ai?.audience ?? [];
+  const specificAudience = audienceList.find(
+    (a) => a && a !== "全校师生" && a !== "全校" && a.length <= 12,
+  );
+  const isImportant = Boolean(notice.important ?? notice.ai?.isImportant);
+  const importantReason = notice.importantReason ?? notice.ai?.importantReason;
   const attCount = notice.attachments?.length ?? notice.attachmentCount ?? 0;
   const coverThumb = notice.cover ? mediaThumbUrl(notice.cover, 480) : undefined;
   const coverRef = useRef<HTMLSpanElement>(null);
   const [brokenCoverSrc, setBrokenCoverSrc] = useState<string | null>(null);
-  const [coverMounted, setCoverMounted] = useState<boolean>(priorityCover);
+  const mountImmediately = priorityCover || index < 12;
+  const [coverMounted, setCoverMounted] = useState<boolean>(mountImmediately);
   const showCover = Boolean(coverThumb && brokenCoverSrc !== coverThumb);
 
   useEffect(() => {
-    if (priorityCover) {
+    if (mountImmediately) {
       setCoverMounted(true);
       return;
     }
     const el = coverRef.current;
     if (!showCover || !el) return;
     return observeViewport(el, setCoverMounted);
-  }, [priorityCover, showCover]);
+  }, [mountImmediately, showCover]);
 
   return (
     <li
@@ -61,6 +72,7 @@ export const NoticeCard = memo(function NoticeCard({
         data-tone={notice.tone}
         data-new={notice.isNew ? "true" : undefined}
         data-starred={starred ? "true" : undefined}
+        data-important={isImportant ? "true" : undefined}
         data-registration={notice.registration ? "true" : undefined}
         aria-haspopup="dialog"
         onClick={() => onOpen(notice)}
@@ -86,6 +98,15 @@ export const NoticeCard = memo(function NoticeCard({
 
         <span className="notice-block-body">
           <span className="notice-block-title" title={notice.title}>
+            {isImportant && (
+              <span
+                className="notice-important-badge"
+                title={importantReason || (en ? "Important notice" : "重要通知")}
+              >
+                <span aria-hidden="true">{en ? "KEY" : "重要"}</span>
+                <span className="sr-only">{en ? "Important notice" : "重要通知"}</span>
+              </span>
+            )}
             {notice.registration && (
               <span
                 className="notice-registration"
@@ -102,7 +123,7 @@ export const NoticeCard = memo(function NoticeCard({
             <span className="notice-block-excerpt">{excerpt}</span>
           )}
 
-          {(eventChip || attCount > 0) && (
+          {(eventChip || deadlineChip || specificAudience || attCount > 0) && (
             <span className="notice-chips-row">
               {eventChip && (
                 <span className="notice-event-chip">
@@ -111,6 +132,21 @@ export const NoticeCard = memo(function NoticeCard({
                   {notice.venue && (
                     <span className="notice-event-venue">· {notice.venue}</span>
                   )}
+                </span>
+              )}
+              {deadlineChip && (
+                <span className="notice-deadline-chip">
+                  <Clock aria-hidden="true" />
+                  <span>{deadlineChip}</span>
+                </span>
+              )}
+              {specificAudience && (
+                <span
+                  className="notice-audience-chip"
+                  title={audienceList.join("、")}
+                >
+                  <Users aria-hidden="true" />
+                  <span>{specificAudience}</span>
                 </span>
               )}
               {attCount > 0 && (

@@ -748,8 +748,8 @@ export function extractArticle(
       if (!m) return null;
       let hh = Number(m[5]);
       const mm = m[6];
-      if ((m[4] === "下午" || m[4] === "晚上" || m[4] === "晚") && hh < 12) hh += 12;
-      if (m[4] === "上午" && hh === 12) hh = 0;
+      if ((m[4] === "下午" || m[4] === "晚上" || m[4] === "晚") && hh >= 1 && hh <= 11) hh += 12;
+      if (m[4] === "凌晨" && hh === 12) hh = 0;
       if (hh > 23 || Number(mm) > 59) return null;
       return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}T${String(hh).padStart(2, "0")}:${mm}:00+08:00`;
     };

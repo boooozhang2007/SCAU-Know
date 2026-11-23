@@ -10,8 +10,17 @@ import {
   dayDiffCst,
   isToday,
   matchesQuery,
+  normalizeCstIso,
+  safeParseTimestamp,
+  sanitizeEventRange,
   sortByPublished,
 } from "@/lib/format";
+import {
+  AI_SCHEMA_VERSION,
+  analyzeNoticeByRules,
+  cleanVenue,
+  normalizeAudience,
+} from "@/lib/ai/extract-rules";
 import { inferSubject } from "@/lib/sources";
 import { CATEGORIES, type SubjectSlug } from "@/lib/site";
 
@@ -71,133 +80,136 @@ function dateFromUrl(url: string): string | null {
   return `${m[1]}-${m[2]}-${m[3]}T00:00:00+08:00`;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function to24h(hour: number, period?: string): number {
-  let h = hour;
-  if ((period === "下午" || period === "晚上" || period === "晚") && h < 12) h += 12;
-  if (period === "上午" && h === 12) h = 0;
-  return h;
-}
-
-const NOISE_VENUE = /^(另行通知|待定|见附件|详见|无|线上|线下)$/;
-
-function sanitizeVenue(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const candidate = cleanTextSpacing(raw).replace(/[，,].*$/, "").trim();
-  if (
-    candidate.length < 2 ||
-    candidate.length > 36 ||
-    NOISE_VENUE.test(candidate) ||
-    /访问网上系统|自行访问/.test(candidate)
-  ) {
-    return null;
-  }
-  return candidate;
-}
-
-/** 从清洗后的正文中补提活动起止时间与地点 */
-function recoverSchedule(
-  cleanedParagraphs: string[],
+function fixPublishedAt(
   publishedAt: string,
-  category: string,
-  title: string,
-  existingStartsAt: string | null,
-  existingEndsAt: string | null,
-  existingVenue: string | null,
-): {
-  startsAt: string | null;
-  endsAt: string | null;
-  venue: string | null;
-} {
-  const joined = cleanedParagraphs.join("\n");
-  const pubYear = Number(publishedAt.slice(0, 4)) || new Date().getFullYear();
-
-  let startsAt = existingStartsAt;
-  let endsAt = existingEndsAt;
-  let venue = sanitizeVenue(existingVenue);
-
-  const isEventLike =
-    ["arts", "lectures", "skills", "careers", "clubs"].includes(category) ||
-    /讲座|报告|论坛|比赛|大赛|宣讲|演出|培训|考试|答辩|工作坊|沙龙/.test(title);
-
-  if (!startsAt || !endsAt) {
-    const prefix = isEventLike
-      ? "(?:活动时间|报告时间|讲座时间|会议时间|举办时间|开始时间|演出时间|比赛时间|宣讲时间|培训时间|考试时间|时\\s*间)"
-      : "(?:活动时间|报告时间|讲座时间|会议时间|举办时间|开始时间|演出时间|比赛时间|宣讲时间|培训时间|考试时间)";
-    const labelRe = new RegExp(
-      `${prefix}\\s*[:：]\\s*(?:(20\\d{2})\\s*[-/年.]\\s*)?(\\d{1,2})\\s*[-/月.]\\s*(\\d{1,2})日?(?:[（(][^)）]{0,12}[)）])?\\s*(上午|下午|晚上|晚)?\\s*(?:(\\d{1,2})\\s*[:：点时]\\s*(\\d{2})?)?(?:\\s*[-–—~至]\\s*(上午|下午|晚上|晚)?\\s*(\\d{1,2})\\s*[:：点时]\\s*(\\d{2})?)?`,
-    );
-    const m = joined.match(labelRe);
-    if (m) {
-      const y = m[1] ? Number(m[1]) : pubYear;
-      const mo = Number(m[2]);
-      const d = Number(m[3]);
-      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
-        const period1 = m[4];
-        const hh1 = m[5] !== undefined ? to24h(Number(m[5]), period1) : 0;
-        const mm1 = m[6] !== undefined ? Number(m[6]) : 0;
-        if (hh1 <= 23 && mm1 <= 59) {
-          if (!startsAt) {
-            startsAt = `${y}-${pad(mo)}-${pad(d)}T${pad(hh1)}:${pad(mm1)}:00+08:00`;
-          }
-          if (!endsAt && m[8] !== undefined) {
-            const period2 = m[7] || period1;
-            const hh2 = to24h(Number(m[8]), period2);
-            const mm2 = m[9] !== undefined ? Number(m[9]) : 0;
-            if (hh2 <= 23 && mm2 <= 59) {
-              endsAt = `${y}-${pad(mo)}-${pad(d)}T${pad(hh2)}:${pad(mm2)}:00+08:00`;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (!venue) {
-    const venueRe =
-      /(?:活动地点|举办地点|会议地点|报告地点|讲座地点|宣讲地点|培训地点|比赛地点|地\s*点)\s*[:：]\s*([^\n。；;]{2,42})/;
-    const vm = joined.match(venueRe);
-    if (vm) {
-      venue = sanitizeVenue(vm[1]);
-    }
-  }
-
-  return { startsAt, endsAt, venue };
-}
-
-function fixPublishedAt(publishedAt: string, url: string, now: Date): string {
-  const pubMs = new Date(publishedAt).getTime();
-  // 严格按北京时间判断：若发布日期落在未来（明天及之后），回落到文章 URL 路径日期
-  if (Number.isNaN(pubMs) || dayDiffCst(publishedAt, now) > 0) {
+  url: string,
+  now: Date,
+  fetchedAt?: string,
+): string {
+  const norm = normalizeCstIso(publishedAt);
+  const pubMs = norm ? Date.parse(norm) : Number.NaN;
+  // 严格按北京时间判断：若发布日期无效或落在未来（明天及之后），依次回落到文章 URL 路径日期 / 抓取时间
+  if (Number.isNaN(pubMs) || !norm || dayDiffCst(norm, now) > 0) {
     const urlDate = dateFromUrl(url);
-    if (urlDate) return urlDate;
+    if (urlDate && dayDiffCst(urlDate, now) <= 0) return urlDate;
+    const fetchedNorm = normalizeCstIso(fetchedAt);
+    if (fetchedNorm && dayDiffCst(fetchedNorm, now) <= 0) return fetchedNorm;
+    return normalizeCstIso(now.toISOString()) ?? now.toISOString();
   }
-  return publishedAt;
+  return norm;
 }
 
 function toNotice(n: CrawledNotice, now: Date): Notice {
-  const ai = n.ai;
-  const title = cleanTextSpacing(ai?.cleanTitle || n.title);
+  const rawAi = n.ai;
+  const title = cleanTextSpacing(rawAi?.cleanTitle || n.title);
   const paragraphs = (n.paragraphs ?? []).map(cleanTextSpacing).filter(Boolean);
-  const rawSummary = cleanTextSpacing(ai?.summary || n.summary || paragraphs[0] || title);
-  const publishedAt = fixPublishedAt(n.publishedAt, n.url, now);
+  const rawSummary = cleanTextSpacing(rawAi?.summary || n.summary || paragraphs[0] || title);
+  const publishedAt = fixPublishedAt(n.publishedAt, n.url, now, n.fetchedAt);
   const effectiveCategory =
-    ai?.category && VALID_CATS.has(ai.category) ? ai.category : n.category;
+    rawAi?.category && VALID_CATS.has(rawAi.category) ? rawAi.category : n.category;
   const effectiveSubject: SubjectSlug =
-    ai?.subject ?? inferSubject(n.source, title);
+    rawAi?.subject ?? inferSubject(n.source, title);
 
-  const schedule = recoverSchedule(
-    paragraphs,
-    publishedAt,
-    effectiveCategory,
+  const isV2Ai = Boolean(rawAi && rawAi.enrichedBy === "ai" && (rawAi.schemaVersion ?? 1) >= AI_SCHEMA_VERSION);
+  const rule = analyzeNoticeByRules({
     title,
-    ai?.startsAt ?? n.startsAt,
-    ai?.endsAt ?? n.endsAt,
-    ai?.venue ?? n.venue ?? null,
-  );
+    summary: rawSummary,
+    paragraphs,
+    source: n.source,
+    category: effectiveCategory,
+    publishedAt,
+    startsAt: rawAi?.startsAt ?? n.startsAt,
+    endsAt: rawAi?.endsAt ?? n.endsAt,
+    venue: rawAi?.venue ?? n.venue ?? null,
+    registration: rawAi?.registrationRequired ?? n.registration,
+    attachments: n.attachments,
+  });
+
+  // v2 真 AI 结果优先使用 LLM 字段并过一遍确定性清洗；旧版 v1 / 无 AI 则自动升级到 v2 规则判定
+  const noticeKind = isV2Ai && rawAi?.noticeKind ? rawAi.noticeKind : rule.noticeKind;
+  const isNonActionable = noticeKind === "recap" || noticeKind === "editorial";
+
+  const schedule = isNonActionable
+    ? { startsAt: null, endsAt: null }
+    : isV2Ai
+      ? sanitizeEventRange(rawAi?.startsAt ?? rule.startsAt, rawAi?.endsAt ?? rule.endsAt)
+      : sanitizeEventRange(rule.startsAt, rule.endsAt);
+
+  const venue = isNonActionable
+    ? null
+    : cleanVenue(isV2Ai ? rawAi?.venue : null) ?? rule.venue;
+
+  const audience = isV2Ai && rawAi?.audience?.length
+    ? normalizeAudience(rawAi.audience)
+    : rule.audience;
+
+  const registrationRequired = isNonActionable
+    ? false
+    : isV2Ai && typeof rawAi?.registrationRequired === "boolean"
+      ? rawAi.registrationRequired
+      : rule.registrationRequired;
+
+  const registrationDeadline = isNonActionable
+    ? null
+    : (isV2Ai ? rawAi?.registrationDeadline : null) ?? rule.registrationDeadline;
+
+  const importance = isV2Ai && typeof rawAi?.importance === "number"
+    ? (isNonActionable ? Math.min(rawAi.importance, 2) : rawAi.importance)
+    : rule.importance;
+
+  const important = isNonActionable
+    ? false
+    : isV2Ai && typeof rawAi?.isImportant === "boolean"
+      ? rawAi.isImportant
+      : rule.isImportant;
+
+  const importantReason = important
+    ? (isV2Ai && rawAi?.importantReason ? rawAi.importantReason : rule.importantReason || undefined)
+    : undefined;
+
+  const actionSummary = isNonActionable
+    ? undefined
+    : (isV2Ai && rawAi?.actionSummary ? rawAi.actionSummary : rule.actionSummary);
+
+  const mergedAi = rawAi
+    ? {
+        ...rawAi,
+        schemaVersion: isV2Ai ? rawAi.schemaVersion : AI_SCHEMA_VERSION,
+        noticeKind,
+        startsAt: schedule.startsAt,
+        endsAt: schedule.endsAt,
+        venue,
+        audience,
+        registrationRequired,
+        registrationDeadline,
+        importance,
+        isImportant: important,
+        importantReason,
+        actionSummary,
+      }
+    : {
+        schemaVersion: AI_SCHEMA_VERSION,
+        noticeKind,
+        cleanTitle: title,
+        summary: rawSummary,
+        category: effectiveCategory,
+        subject: effectiveSubject,
+        startsAt: schedule.startsAt,
+        endsAt: schedule.endsAt,
+        venue,
+        audience,
+        registrationRequired,
+        registrationDeadline,
+        importance,
+        isImportant: important,
+        importantReason,
+        actionSummary,
+        tags: rule.tags,
+        shouldNotify: rule.shouldNotify,
+        notifyReason: rule.notifyReason,
+        enrichedBy: "rules" as const,
+        enrichedAt: publishedAt,
+      };
 
   const isStaticBuild = process.env.STATIC_EXPORT === "1";
   const attachments = n.attachments?.map((att) => ({
@@ -236,14 +248,21 @@ function toNotice(n: CrawledNotice, now: Date): Notice {
     publishedAt,
     startsAt: schedule.startsAt,
     endsAt: schedule.endsAt,
-    venue: schedule.venue ?? undefined,
-    registration: ai?.registrationRequired ?? n.registration,
+    venue: venue ?? undefined,
+    registration: registrationRequired || undefined,
+    registrationDeadline: registrationDeadline ?? undefined,
+    audience: audience.length ? audience : undefined,
+    noticeKind,
+    important: important || undefined,
+    importance,
+    importantReason,
+    actionSummary,
     summary: rawSummary,
     paragraphs,
     cover: n.cover,
     blocks: cleanedBlocks,
     attachments: attachments?.length ? attachments : undefined,
-    ai,
+    ai: mergedAi,
     url: n.url,
     isNew: isToday(publishedAt, now),
     requiresAuth: n.requiresAuth || undefined,
@@ -272,7 +291,7 @@ export function buildSearchSnippet(n: Notice): string | undefined {
   return joined ? joined.slice(0, 420) : undefined;
 }
 
-/** 生成用于首屏 SSR / 列表接口的极简 Notice 摘要，剔除 AI 元数据、搜索索引与有封面时的摘要文本 */
+/** 生成用于首屏 SSR / 列表接口的精简 Notice 摘要，保留重要通知/排期/对象等轻量化卡片展示字段 */
 export function toNoticeSummary(n: Notice): Notice {
   const trimmedSummary = n.cover
     ? ""
@@ -280,6 +299,7 @@ export function toNoticeSummary(n: Notice): Notice {
       ? `${n.summary.slice(0, 110)}…`
       : n.summary;
   const attCount = n.attachments?.length || n.attachmentCount || 0;
+  const audience = n.audience?.slice(0, 3);
   return {
     id: n.id,
     title: n.title,
@@ -293,6 +313,13 @@ export function toNoticeSummary(n: Notice): Notice {
     ...(n.endsAt ? { endsAt: n.endsAt } : {}),
     ...(n.venue ? { venue: n.venue } : {}),
     ...(n.registration ? { registration: true } : {}),
+    ...(n.registrationDeadline ? { registrationDeadline: n.registrationDeadline } : {}),
+    ...(audience && audience.length > 0 ? { audience } : {}),
+    ...(n.noticeKind ? { noticeKind: n.noticeKind } : {}),
+    ...(n.important ? { important: true } : {}),
+    ...(n.importance ? { importance: n.importance } : {}),
+    ...(n.importantReason ? { importantReason: n.importantReason } : {}),
+    ...(n.actionSummary ? { actionSummary: n.actionSummary } : {}),
     summary: trimmedSummary,
     paragraphs: [],
     ...(attCount > 0 ? { attachmentCount: attCount } : {}),
@@ -302,6 +329,53 @@ export function toNoticeSummary(n: Notice): Notice {
     ...(n.isNew ? { isNew: true } : {}),
     ...(n.requiresAuth ? { requiresAuth: true } : {}),
   };
+}
+
+/** 按 ID 与「同来源+同规范标题（且排期一致/相近）」双重去重，消除公众号短链/重复抓取导致的重复卡片 */
+function deduplicateNotices(list: Notice[]): Notice[] {
+  const qualityScore = (x: Notice) =>
+    (x.ai?.enrichedBy === "ai" ? 8 : 0) +
+    (x.paragraphs.length > 0 ? 4 : 0) +
+    (x.attachments?.length ? 2 : 0) +
+    (x.cover ? 1 : 0);
+
+  const pickBetter = (a: Notice, b: Notice): Notice => {
+    const sa = qualityScore(a);
+    const sb = qualityScore(b);
+    if (sb !== sa) return sb > sa ? b : a;
+    return safeParseTimestamp(b.publishedAt) > safeParseTimestamp(a.publishedAt) ? b : a;
+  };
+
+  // 1) 主键 ID 去重
+  const byId = new Map<string, Notice>();
+  for (const item of list) {
+    const prev = byId.get(item.id);
+    byId.set(item.id, prev ? pickBetter(prev, item) : item);
+  }
+
+  // 2) 同来源 + 同标题去重（保留不同排期日期的同名定期通知，如不同日期的思政公开课）
+  const normTitle = (t: string) =>
+    t.replace(/[\s\u3000"“”'‘’《》【】（）()\-—–·.,:：;；!！?？|｜]/g, "").toLowerCase();
+  const byContent = new Map<string, Notice>();
+  for (const item of byId.values()) {
+    const startDay = item.startsAt ? cstDateKey(item.startsAt) : "";
+    const contentKey = `${item.source}::${normTitle(item.title)}::${startDay}`;
+    const prev = byContent.get(contentKey);
+    if (!prev) {
+      byContent.set(contentKey, item);
+      continue;
+    }
+    const dayGap = Math.abs(
+      safeParseTimestamp(item.publishedAt) - safeParseTimestamp(prev.publishedAt),
+    ) / 86400000;
+    if (dayGap <= 10) {
+      byContent.set(contentKey, pickBetter(prev, item));
+    } else {
+      byContent.set(`${contentKey}::${item.id}`, item);
+    }
+  }
+
+  return sortByPublished([...byContent.values()]);
 }
 
 async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
@@ -321,7 +395,7 @@ async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
 
     const crawled = await readNotices();
     if (crawled.length > 0) {
-      const notices = crawled.map((n) => toNotice(n, now));
+      const notices = deduplicateNotices(crawled.map((n) => toNotice(n, now)));
       const summaries = notices.map(toNoticeSummary);
       const byId = new Map<string, Notice>(notices.map((n) => [n.id, n]));
       const fresh: NoticesMemoryCache = {
@@ -332,7 +406,7 @@ async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
         summaries,
         byId,
         fromCrawl: true,
-        crawledCount: crawled.length,
+        crawledCount: notices.length,
       };
       globalThis.__scauNoticesDataCache = fresh;
       return fresh;
@@ -341,17 +415,49 @@ async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
     /* 读取失败则回退到内置真实首屏快照 */
   }
 
-  const seed = SEED_NOTICES.map((n) => ({
-    ...n,
-    paragraphs:
-      n.paragraphs.length > 0
-        ? n.paragraphs
-        : (n.blocks ?? [])
-            .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
-            .map((b) => b.text),
-    subject: n.subject ?? inferSubject(n.source, n.title),
-    isNew: isToday(n.publishedAt, now),
-  }));
+  const seed = deduplicateNotices(
+    SEED_NOTICES.map((n) => {
+      const paragraphs =
+        n.paragraphs.length > 0
+          ? n.paragraphs
+          : (n.blocks ?? [])
+              .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
+              .map((b) => b.text);
+      const publishedAt = fixPublishedAt(n.publishedAt, n.url, now);
+      const rule = analyzeNoticeByRules({
+        title: n.title,
+        summary: n.summary,
+        paragraphs,
+        source: n.source,
+        category: n.category,
+        publishedAt,
+        startsAt: n.startsAt,
+        endsAt: n.endsAt,
+        venue: n.venue,
+        registration: n.registration,
+        attachments: n.attachments,
+      });
+      const isNonActionable = rule.noticeKind === "recap" || rule.noticeKind === "editorial";
+      return {
+        ...n,
+        publishedAt,
+        paragraphs,
+        startsAt: isNonActionable ? null : rule.startsAt,
+        endsAt: isNonActionable ? null : rule.endsAt,
+        venue: isNonActionable ? undefined : (rule.venue ?? undefined),
+        registration: rule.registrationRequired || undefined,
+        registrationDeadline: rule.registrationDeadline ?? undefined,
+        audience: rule.audience.length ? rule.audience : undefined,
+        noticeKind: rule.noticeKind,
+        important: rule.isImportant || undefined,
+        importance: rule.importance,
+        importantReason: rule.importantReason || undefined,
+        actionSummary: rule.actionSummary,
+        subject: n.subject ?? inferSubject(n.source, n.title),
+        isNew: isToday(publishedAt, now),
+      };
+    }),
+  );
   return {
     mtimeMs: 0,
     size: 0,
@@ -444,9 +550,10 @@ function withHydratedNotice(
 }
 
 /**
- * 首页首屏轻量切片（参照 pkuknow.cn/thu）：
- * SSR 仅下发前 `sectionCount`（默认 2 个）非空板块、每板块 `perSection`（默认 18 条）与全站分类计数，
- * 其余板块待滚动或交互时由客户端懒加载 `/static-data/notices-summary.json` 展开。
+ * 首页第一个「全部」首屏轻量切片（参照 pkuknow.cn/thu）：
+ * SSR 仅下发前 `sectionCount`（默认 2 个）非空分类板块、每板块 `perSection`（默认 18 条）与全站分类计数，
+ * 其余板块待滚动或交互时由客户端懒加载展开；
+ * 活动「全部」/ 通知「全部」（/?cluster=...）则加载全量摘要以平铺瀑布流展示。
  */
 export async function loadInitialHomeSlice(
   now = new Date(),

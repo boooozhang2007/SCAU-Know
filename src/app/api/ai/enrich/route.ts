@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyAdminRequest } from "@/lib/admin-auth";
 import { readNotices, writeNotices } from "@/lib/crawl/store";
 import { enrichNotice, getAiConfig, isAiConfigured } from "@/lib/ai/enrich";
+import { AI_SCHEMA_VERSION } from "@/lib/ai/extract-rules";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -44,7 +45,13 @@ export async function POST(req: Request) {
   for (let i = 0; i < notices.length && updated < limit; i++) {
     const n = notices[i];
     if (onlyMissing && n.ai) continue;
-    if (forceAi && n.ai?.enrichedBy === "ai") continue;
+    if (
+      forceAi &&
+      n.ai?.enrichedBy === "ai" &&
+      (n.ai.schemaVersion ?? 1) >= AI_SCHEMA_VERSION
+    ) {
+      continue;
+    }
     n.ai = await enrichNotice(n);
     if (n.ai.enrichedBy === "ai") aiUpdated++;
     updated++;

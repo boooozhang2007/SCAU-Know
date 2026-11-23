@@ -1,9 +1,14 @@
 import { CRAWL_SOURCES, type SourceKind } from "@/lib/crawl/sources";
+import {
+  WECHAT_BY_NAME,
+  WECHAT_BY_SOURCE_ID,
+  type WechatAccount,
+} from "@/lib/crawl/wechat-accounts";
 import type { SubjectSlug } from "./site";
 
 /**
  * 来源单位映射与元数据解析。
- * 自动整合 CRAWL_SOURCES 全部 51 个二级单位，并补充历史演示单位别名。
+ * 自动整合 CRAWL_SOURCES 全部 51 个二级单位，并补充常见校内单位别名。
  */
 
 const EXTRA_URLS: Record<string, string> = {
@@ -120,20 +125,72 @@ export function inferSubject(source: string, title = ""): SubjectSlug {
   return "general";
 }
 
-export function kindOfSource(source: string): SourceKind {
+export type ExtendedSourceKind = SourceKind | "wechat";
+
+export function isWechatNotice(notice: { id?: string; url?: string }): boolean {
+  if (notice.id?.startsWith("wx_")) return true;
+  if (notice.url && /mp\.weixin\.qq\.com/i.test(notice.url)) return true;
+  return false;
+}
+
+export function kindOfSource(source: string, wechatOnly = false): ExtendedSourceKind {
   const meta = SOURCE_META_BY_NAME.get(source);
   if (meta) return meta.kind;
+  const wx = WECHAT_BY_NAME.get(source);
+  if (wx && !wx.sourceId) return "wechat";
+  if (wechatOnly) return "wechat";
   if (/学院/.test(source)) return "college";
   if (/馆|医院|中心|后勤|饮食/.test(source)) return "service";
   if (source === "华南农业大学") return "media";
   return "department";
 }
 
+/** 返回某来源单位关联的全部微信公众号（含院系官方号与团学/子号） */
+export function wechatAccountsOfSource(source: string): WechatAccount[] {
+  const meta = SOURCE_META_BY_NAME.get(source);
+  const result: WechatAccount[] = [];
+  const seen = new Set<string>();
+  const push = (acc: WechatAccount) => {
+    if (seen.has(acc.name)) return;
+    seen.add(acc.name);
+    result.push(acc);
+  };
+
+  if (meta) {
+    for (const acc of WECHAT_BY_SOURCE_ID.get(meta.id) ?? []) {
+      push(acc);
+    }
+    if (meta.wechat && !seen.has(meta.wechat)) {
+      push({ name: meta.wechat, sourceId: meta.id, group: "official" });
+    }
+    return result;
+  }
+
+  const direct = WECHAT_BY_NAME.get(source);
+  if (direct) push(direct);
+  return result;
+}
+
 export function wechatOfSource(source: string): string | undefined {
-  return SOURCE_META_BY_NAME.get(source)?.wechat;
+  const list = wechatAccountsOfSource(source);
+  return list[0]?.name ?? SOURCE_META_BY_NAME.get(source)?.wechat;
+}
+
+export function wechatIdOfSource(source: string): string | undefined {
+  const list = wechatAccountsOfSource(source);
+  return list.find((a) => Boolean(a.wechatId))?.wechatId;
 }
 
 const FALLBACK = "https://www.scau.edu.cn/";
+
+/** 返回来源单位的真实官网地址；独立公众号返回 undefined，避免误链到主站 */
+export function officialWebsiteUrl(source: string): string | undefined {
+  const meta = SOURCE_META_BY_NAME.get(source);
+  if (meta) return meta.listUrl ?? meta.base;
+  const wx = WECHAT_BY_NAME.get(source);
+  if (wx && !wx.sourceId) return undefined;
+  return EXTRA_URLS[source];
+}
 
 /**
  * 解析某条通知的原文地址。

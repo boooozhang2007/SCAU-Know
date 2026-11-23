@@ -43,7 +43,19 @@ export interface NoticeAttachment {
   error?: string;
 }
 
+export type NoticeKind =
+  | "action"
+  | "event"
+  | "announcement"
+  | "recruitment"
+  | "recap"
+  | "editorial";
+
 export interface NoticeAiMeta {
+  /** 结构化抽取 schema 版本（v2 起包含体裁判定、重要通知标记与精准对象/地点清洗） */
+  schemaVersion?: number;
+  /** 信息体裁：行动办理 / 活动预告 / 公示公告 / 招募招聘 / 活动回顾 / 校园资讯 */
+  noticeKind?: NoticeKind;
   cleanTitle?: string;
   summary?: string;
   category?: string;
@@ -55,6 +67,12 @@ export interface NoticeAiMeta {
   registrationRequired?: boolean;
   registrationDeadline?: string | null;
   importance?: number;
+  /** 是否自动标为重要通知 */
+  isImportant?: boolean;
+  /** 重要通知判定理由（短句） */
+  importantReason?: string;
+  /** 一句话行动指引（如 "11月25日前登录教务系统完成选课"） */
+  actionSummary?: string;
   tags?: string[];
   shouldNotify?: boolean;
   notifyReason?: string;
@@ -83,6 +101,20 @@ export interface Notice {
   venue?: string;
   /** 是否需报名 */
   registration?: boolean;
+  /** 报名/提交截止时间 */
+  registrationDeadline?: string | null;
+  /** 面向对象（精简标签，列表与详情共用） */
+  audience?: string[];
+  /** 信息体裁 */
+  noticeKind?: NoticeKind;
+  /** 是否自动标为重要通知 */
+  important?: boolean;
+  /** 重要度评分 1..5 */
+  importance?: number;
+  /** 标为重要通知的简短原因 */
+  importantReason?: string;
+  /** 一句话行动指引 */
+  actionSummary?: string;
   /** 摘要 */
   summary: string;
   /** 正文段落 */
@@ -113,8 +145,22 @@ export interface SourceRef {
   name: string;
   shortName: string;
   count: number;
+  /** 来自官网抓取的通知条数 */
+  webCount: number;
+  /** 来自微信公众号的通知条数 */
+  wechatCount: number;
   tone: Tone;
-  kind: "college" | "department" | "service" | "media";
-  url: string;
+  kind: "college" | "department" | "service" | "media" | "wechat";
+  /** 官方站点链接（纯公众号源无独立官网时为空） */
+  url?: string;
+  /** 对应或关联的主微信公众号名 */
   wechat?: string;
+  /** 主微信公众号微信号 */
+  wechatId?: string;
+  /** 关联的全部公众号名（含院系团学/子号，用于展示与检索） */
+  wechatAccounts?: string[];
+  /** 关联的全部微信号（用于检索） */
+  wechatIds?: string[];
+  /** 最新一篇微信文章链接 */
+  latestWechatUrl?: string;
 }

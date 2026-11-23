@@ -14,12 +14,13 @@ export const dynamic = "force-dynamic";
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string }>;
+  searchParams: Promise<{ category?: string; date?: string }>;
 }) {
-  const { category } = await searchParams;
+  const { category, date } = await searchParams;
   const nowDate = new Date();
   const now = nowDate.toISOString();
   const activeCat = category && CATEGORY_MAP.has(category) ? category : null;
+  const initialDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date.trim()) ? date.trim() : null;
 
   const slice = await loadInitialCalendarSlice(nowDate);
 
@@ -38,6 +39,7 @@ export default async function CalendarPage({
         initialNotices={slice.notices}
         initialNow={now}
         activeCat={activeCat}
+        initialDate={initialDate}
       />
     </SiteShell>
   );

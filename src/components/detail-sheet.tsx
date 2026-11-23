@@ -3,8 +3,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  BellRing,
   CalendarClock,
   Check,
+  Clock,
   Download,
   FileArchive,
   FileSpreadsheet,
@@ -30,7 +32,7 @@ import {
   subjectName,
 } from "@/lib/format";
 import { mediaThumbUrl } from "@/lib/media-url";
-import { resolveUrl, sourceHost } from "@/lib/sources";
+import { isWechatNotice, resolveUrl, sourceHost } from "@/lib/sources";
 import { usePreferences } from "@/lib/preferences";
 import { Icon } from "./icon";
 import { ModalDialog } from "./dialog";
@@ -548,6 +550,11 @@ export function DetailSheet({
   const range = activeNotice ? formatRange(activeNotice.startsAt, activeNotice.endsAt, lang) : null;
   const starred = activeNotice ? isStarred(activeNotice.source) : false;
   const summaryText = activeNotice ? meaningfulSummary(activeNotice.title, activeNotice.summary) : null;
+  const isImportant = Boolean(activeNotice?.important ?? activeNotice?.ai?.isImportant);
+  const importantReason = activeNotice?.importantReason ?? activeNotice?.ai?.importantReason;
+  const actionSummary = activeNotice?.actionSummary ?? activeNotice?.ai?.actionSummary;
+  const deadline = activeNotice?.registrationDeadline ?? activeNotice?.ai?.registrationDeadline;
+  const audienceList = activeNotice?.audience ?? activeNotice?.ai?.audience ?? [];
   const targetUrl = activeNotice ? resolveUrl(activeNotice.source, activeNotice.url) : "#";
   const host = activeNotice ? sourceHost(activeNotice.source, activeNotice.url) : "www.scau.edu.cn";
   const hasBlocks = Boolean(activeNotice?.blocks && activeNotice.blocks.length > 0);
@@ -581,9 +588,13 @@ export function DetailSheet({
                     {en ? "Registration" : "需报名"}
                   </span>
                 )}
-                {activeNotice.ai?.importance && activeNotice.ai.importance >= 4 && (
-                  <span className="detail-pill detail-pill-amber">
-                    {en ? `Priority ${activeNotice.ai.importance}/5` : `重点 ${activeNotice.ai.importance}/5`}
+                {isImportant && (
+                  <span
+                    className="detail-pill detail-pill-important"
+                    title={importantReason || undefined}
+                  >
+                    <BellRing aria-hidden="true" />
+                    <span>{en ? "Important" : "重要通知"}</span>
                   </span>
                 )}
               </div>
@@ -653,6 +664,11 @@ export function DetailSheet({
                     {en ? "Source: " : "来源："}
                     <strong>{activeNotice.source}</strong>
                   </span>
+                  {isWechatNotice(activeNotice) && (
+                    <span className="detail-wechat-badge">
+                      {en ? "WeChat" : "公众号"}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="source-star-button"
@@ -707,10 +723,22 @@ export function DetailSheet({
                 </button>
               )}
 
+              {(isImportant && (importantReason || actionSummary)) && (
+                <div className="detail-important-callout" role="note">
+                  <BellRing aria-hidden="true" />
+                  <div className="detail-important-callout-body">
+                    <strong>
+                      {importantReason || (en ? "Important Campus Notice" : "重要校园通知")}
+                    </strong>
+                    {actionSummary && <span>{actionSummary}</span>}
+                  </div>
+                </div>
+              )}
+
               {(range ||
                 activeNotice.venue ||
-                activeNotice.ai?.registrationDeadline ||
-                activeNotice.ai?.audience?.length) && (
+                deadline ||
+                audienceList.length > 0) && (
                 <dl className="detail-facts">
                   {range && (
                     <div className="detail-fact">
@@ -730,22 +758,22 @@ export function DetailSheet({
                       <dd>{activeNotice.venue}</dd>
                     </div>
                   )}
-                  {activeNotice.ai?.registrationDeadline && (
+                  {deadline && (
                     <div className="detail-fact">
                       <dt>
-                        <CalendarClock />
-                        <span>{en ? "Deadline" : "报名截止"}</span>
+                        <Clock />
+                        <span>{en ? "Deadline" : "截止时间"}</span>
                       </dt>
-                      <dd>{activeNotice.ai.registrationDeadline}</dd>
+                      <dd>{deadline}</dd>
                     </div>
                   )}
-                  {activeNotice.ai?.audience && activeNotice.ai.audience.length > 0 && (
+                  {audienceList.length > 0 && (
                     <div className="detail-fact">
                       <dt>
                         <Users />
-                        <span>{en ? "Audience" : "面向群体"}</span>
+                        <span>{en ? "Audience" : "面向对象"}</span>
                       </dt>
-                      <dd>{activeNotice.ai.audience.join("、")}</dd>
+                      <dd>{audienceList.join("、")}</dd>
                     </div>
                   )}
                 </dl>

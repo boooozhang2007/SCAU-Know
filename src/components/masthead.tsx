@@ -281,8 +281,8 @@ export function Masthead({
             <button
               type="button"
               className="icon-button"
-              aria-label={en ? "Site Statistics" : "访问量"}
-              title={en ? "Site Statistics" : "访问量"}
+              aria-label={en ? "Data Overview" : "数据概览"}
+              title={en ? "Data Overview" : "数据概览"}
               onClick={onOpenStats}
             >
               <ChartColumn />
@@ -421,7 +421,7 @@ export function Masthead({
             }}
           >
             <ChartColumn />
-            <span>{en ? "Stats" : "访问量"}</span>
+            <span>{en ? "Overview" : "数据概览"}</span>
           </button>
           <button
             type="button"

@@ -39,6 +39,7 @@ export default async function SearchPage({
       initialTotalCount={slice.totalCount}
       initialCategoryCounts={slice.categoryCounts}
       initialPartial={slice.partial}
+      singleSection={Boolean(kw)}
       now={now}
       initialQuery={kw}
     />

@@ -17,5 +17,12 @@ d = json.load(open(P, encoding="utf-8"))
 total = len(d)
 none = sum(1 for n in d if not n.get("ai"))
 ai = sum(1 for n in d if (n.get("ai") or {}).get("enrichedBy") == "ai")
+ai_v2 = sum(
+    1
+    for n in d
+    if (n.get("ai") or {}).get("enrichedBy") == "ai"
+    and ((n.get("ai") or {}).get("schemaVersion") or 1) >= 2
+)
 rules = sum(1 for n in d if (n.get("ai") or {}).get("enrichedBy") == "rules")
-print(f"total={total} missing={none} ai={ai} rules={rules}")
+important = sum(1 for n in d if (n.get("ai") or {}).get("isImportant"))
+print(f"total={total} missing={none} ai={ai} ai_v2={ai_v2} rules={rules} important={important}")

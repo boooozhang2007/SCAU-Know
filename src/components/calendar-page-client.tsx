@@ -3,26 +3,30 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, X } from "lucide-react";
 import { CalendarList } from "@/components/calendar-list";
 import { useLiveNotices } from "@/components/site-shell";
-import { CATEGORIES, CATEGORY_MAP } from "@/lib/site";
+import { CATEGORY_MAP } from "@/lib/site";
+import { usePreferences } from "@/lib/preferences";
+import { categoryName } from "@/lib/format";
 import type { Notice } from "@/lib/types";
 
 const STATIC_MODE = process.env.NEXT_PUBLIC_STATIC_MODE === "1";
 
 function CalendarQueryBridge({
-  onCategory,
+  onSync,
 }: {
-  onCategory: (cat: string | null) => void;
+  onSync: (next: { category: string | null; date: string | null }) => void;
 }) {
   const sp = useSearchParams();
-  const raw = sp.get("category")?.trim() ?? "";
-  const resolved = raw && CATEGORY_MAP.has(raw) ? raw : null;
+  const rawCat = sp.get("category")?.trim() ?? "";
+  const category = rawCat && CATEGORY_MAP.has(rawCat) ? rawCat : null;
+  const rawDate = sp.get("date")?.trim() ?? "";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null;
 
   useEffect(() => {
-    onCategory(resolved);
-  }, [resolved, onCategory]);
+    onSync({ category, date });
+  }, [category, date, onSync]);
 
   return null;
 }
@@ -31,69 +35,70 @@ export function CalendarPageClient({
   initialNotices,
   initialNow,
   activeCat,
+  initialDate = null,
 }: {
   initialNotices: Notice[];
   initialNow: string;
   activeCat: string | null;
+  initialDate?: string | null;
 }) {
-  const { notices, now } = useLiveNotices(initialNotices, initialNow);
-  const [clientCat, setClientCat] = useState<string | null>(activeCat);
-  const effectiveCat = STATIC_MODE ? clientCat : activeCat;
+  const { notices, now, syncing, refresh } = useLiveNotices(initialNotices, initialNow);
+  const { lang } = usePreferences();
+  const en = lang === "en";
+  const [clientQuery, setClientQuery] = useState<{
+    category: string | null;
+    date: string | null;
+  }>({ category: activeCat, date: initialDate });
 
-  const catMeta = effectiveCat ? CATEGORY_MAP.get(effectiveCat) : null;
+  const effectiveCat = STATIC_MODE ? clientQuery.category : activeCat;
+  const effectiveDate = STATIC_MODE ? clientQuery.date : initialDate;
+
   const scoped = effectiveCat
     ? notices.filter((n) => n.category === effectiveCat)
     : notices;
-  const eventCount = scoped.filter((n) => n.startsAt).length;
-
-  const filterCats = CATEGORIES.filter((c) =>
-    notices.some((n) => n.startsAt && n.category === c.slug),
-  );
 
   return (
     <div className="page-shell calendar-page-shell">
       {STATIC_MODE && (
         <Suspense fallback={null}>
-          <CalendarQueryBridge onCategory={setClientCat} />
+          <CalendarQueryBridge onSync={setClientQuery} />
         </Suspense>
       )}
+
       <div className="calendar-page-header">
         <div className="page-heading">
           <span className="calendar-title-icon" aria-hidden="true">
             <CalendarDays />
           </span>
-          <h1>{catMeta ? `${catMeta.name}日历` : "活动日历"}</h1>
-          <span className="board-total">{eventCount}</span>
-        </div>
-        <p className="page-sub">
-          共 {eventCount} 场已识别排期活动，按北京时间（UTC+8）展示，点击日程可查看详情与原文。
-        </p>
-
-        {filterCats.length > 0 && (
-          <div className="calendar-filter">
+          <h1>
+            {effectiveCat
+              ? en
+                ? `${categoryName(effectiveCat, lang)} Calendar`
+                : `${categoryName(effectiveCat, lang)}日历`
+              : en
+                ? "Activity Calendar"
+                : "活动日历"}
+          </h1>
+          {effectiveCat && (
             <Link
-              className="calendar-cat-chip"
               href="/calendar"
-              aria-current={!effectiveCat ? "page" : undefined}
+              className="active-filter-chip"
+              title={en ? "Clear category filter" : "查看全部分类活动"}
             >
-              全部
+              <span>{categoryName(effectiveCat, lang)}</span>
+              <X aria-hidden="true" />
             </Link>
-            {filterCats.map((c) => (
-              <Link
-                key={c.slug}
-                className="calendar-cat-chip"
-                href={`/calendar?category=${c.slug}`}
-                data-tone={c.tone}
-                aria-current={effectiveCat === c.slug ? "page" : undefined}
-              >
-                {c.name}
-              </Link>
-            ))}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      <CalendarList notices={scoped} now={now} />
+      <CalendarList
+        notices={scoped}
+        now={now}
+        initialDate={effectiveDate}
+        syncing={syncing}
+        onRefresh={refresh}
+      />
     </div>
   );
 }

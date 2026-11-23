@@ -300,8 +300,8 @@ function extractFallbackScheduleFromText(
     const d = Number(m[3]);
     let hh = Number(m[5]);
     const mm = Number(m[6]);
-    if ((m[4] === "下午" || m[4] === "晚上" || m[4] === "晚") && hh < 12) hh += 12;
-    if (m[4] === "上午" && hh === 12) hh = 0;
+    if ((m[4] === "下午" || m[4] === "晚上" || m[4] === "晚") && hh >= 1 && hh <= 11) hh += 12;
+    if (m[4] === "凌晨" && hh === 12) hh = 0;
     if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && hh <= 23 && mm <= 59) {
       const pad = (n: number) => String(n).padStart(2, "0");
       startsAt = `${y}-${pad(mo)}-${pad(d)}T${pad(hh)}:${pad(mm)}:00+08:00`;

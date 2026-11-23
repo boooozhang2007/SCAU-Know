@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
+  BellRing,
   Check,
   SearchX,
   SlidersHorizontal,
@@ -27,6 +28,7 @@ import {
   formatShortTime,
   formatShortTimeCompact,
   matchesQuery,
+  safeParseTimestamp,
   sortByPublished,
   subjectName,
 } from "@/lib/format";
@@ -49,10 +51,10 @@ const DetailSheet = dynamic(
   { ssr: false },
 );
 
-/** 首页每个板块初始展示条数，避免一次渲染上百条 DOM，超出提供「查看全部」入口 */
+/** 首页第一个「全部」各分类板块初始展示条数，超出提供「查看全部」入口 */
 const HOME_SECTION_LIMIT = 18;
-/** 单分类页每批加载条数 */
-const PAGE_BATCH = 30;
+/** 平铺瀑布流（活动全部 / 通知全部 / 单分类 / 搜索）每批展示条数 */
+const PAGE_BATCH = 36;
 
 export function NoticeBoard({
   notices,
@@ -106,6 +108,7 @@ export function NoticeBoard({
   const nowDate = useMemo(() => new Date(now), [now]);
   const [selectedSubjects, setSelectedSubjects] = useState<SubjectSlug[]>([]);
   const [includeGeneral, setIncludeGeneral] = useState(true);
+  const [importantOnly, setImportantOnly] = useState(false);
   const [subjectOpen, setSubjectOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_BATCH);
   const [sheetActivated, setSheetActivated] = useState<boolean>(() => Boolean(initialNoticeId));
@@ -115,6 +118,7 @@ export function NoticeBoard({
   });
   const subjectWrapRef = useRef<HTMLDivElement>(null);
   const lazySentinelRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const handledDeepLinkRef = useRef<string | null>(
     initialNoticeId && notices.some((n) => n.id === initialNoticeId) ? initialNoticeId : null,
   );
@@ -178,6 +182,7 @@ export function NoticeBoard({
     if (!isPartial || !onRequestFullData) return;
     if (
       subjectOpen ||
+      importantOnly ||
       selectedSubjects.length > 0 ||
       viewMode === "star-only" ||
       (viewMode === "star-first" && starred.length > 0)
@@ -188,6 +193,7 @@ export function NoticeBoard({
     isPartial,
     onRequestFullData,
     subjectOpen,
+    importantOnly,
     selectedSubjects.length,
     viewMode,
     starred.length,
@@ -232,6 +238,11 @@ export function NoticeBoard({
     return counts;
   }, [baseScoped]);
 
+  const importantCount = useMemo(
+    () => baseScoped.filter((n) => Boolean(n.important)).length,
+    [baseScoped],
+  );
+
   const filtered = useMemo(() => {
     let list = baseScoped;
 
@@ -240,6 +251,11 @@ export function NoticeBoard({
       const picked = new Set<SubjectSlug>(selectedSubjects);
       if (includeGeneral) picked.add("general");
       list = list.filter((n) => picked.has(n.subject));
+    }
+
+    // 只看重要通知
+    if (importantOnly) {
+      list = list.filter((n) => Boolean(n.important));
     }
 
     // 浏览方式：只看星标 / 星标优先 / 时间排序
@@ -253,14 +269,20 @@ export function NoticeBoard({
         .map((n) => ({
           n,
           star: isStarred(n.source) ? 1 : 0,
-          ts: Date.parse(n.publishedAt) || 0,
+          ts: safeParseTimestamp(n.publishedAt),
         }))
-        .sort((a, b) => (b.star !== a.star ? b.star - a.star : b.ts - a.ts))
+        .sort((a, b) =>
+          b.star !== a.star
+            ? b.star - a.star
+            : b.ts !== a.ts
+              ? b.ts - a.ts
+              : b.n.id.localeCompare(a.n.id),
+        )
         .map((x) => x.n);
     }
 
     return sorted;
-  }, [baseScoped, selectedSubjects, includeGeneral, viewMode, isStarred, starred.length]);
+  }, [baseScoped, selectedSubjects, includeGeneral, importantOnly, viewMode, isStarred, starred.length]);
 
   const sections = useMemo(() => {
     const map = new Map<string, Notice[]>();
@@ -310,6 +332,7 @@ export function NoticeBoard({
     Boolean(initialQuery.trim()) ||
     Boolean(activeSource) ||
     selectedSubjects.length > 0 ||
+    importantOnly ||
     viewMode === "star-only";
 
   const resolvedHeading = (() => {
@@ -324,15 +347,48 @@ export function NoticeBoard({
 
   const clearAllFilters = () => {
     setSelectedSubjects([]);
+    setImportantOnly(false);
     if (viewMode === "star-only") setViewMode("time");
     if (initialQuery.trim() || activeSource) {
       router.push(activeCategory ? `/category/${activeCategory}` : "/");
     }
   };
 
-  const isSingleFeed = singleSection || Boolean(activeCategory);
+  /**
+   * 视图模式对照清华知道：
+   * - 第一个「全部」（/，无 activeCategory / activeCluster）：保持按分类分区卡片墙展示
+   * - 后面两个「全部」（活动->全部 / 通知->全部，即 activeCluster）及单分类页、搜索结果：平铺瀑布流全量展示
+   */
+  const isSingleFeed = singleSection || Boolean(activeCategory) || Boolean(activeCluster);
+  const showBackLink = isSingleFeed;
+  const isHomeAll = !isSingleFeed && !initialQuery.trim() && !activeSource;
 
-  // 多板块模式：当用户开始向下滚动并接近第 2 个板块底部时自动加载其余板块
+  const boardTotalDisplay = useMemo(() => {
+    if (!hasFilters && isPartial) {
+      if (activeCategory && categoryCounts?.[activeCategory] !== undefined) {
+        return categoryCounts[activeCategory];
+      }
+      if (activeCluster && categoryCounts) {
+        return CATEGORIES.filter((c) => c.cluster === activeCluster).reduce(
+          (sum, c) => sum + (categoryCounts[c.slug] ?? 0),
+          0,
+        );
+      }
+      if (!activeCluster && totalCount !== undefined) {
+        return totalCount;
+      }
+    }
+    return filtered.length;
+  }, [hasFilters, isPartial, activeCategory, activeCluster, categoryCounts, totalCount, filtered.length]);
+
+  const visibleItems = useMemo(
+    () => filtered.slice(0, visibleCount),
+    [filtered, visibleCount],
+  );
+  const remainingCount = Math.max(0, boardTotalDisplay - visibleItems.length);
+  const hasMore = isSingleFeed && (remainingCount > 0 || (isPartial && !hasFilters));
+
+  // 多板块模式（首页第一个「全部」）：滚动接近第 2 板块底部时自动拉取并展开其余分类板块
   useEffect(() => {
     if (!isPartial || isSingleFeed || !onRequestFullData) return;
     const el = lazySentinelRef.current;
@@ -362,21 +418,40 @@ export function NoticeBoard({
     };
   }, [isPartial, isSingleFeed, onRequestFullData]);
 
-  const boardTotalDisplay =
-    !hasFilters && isPartial
-      ? isSingleFeed && activeCategory && categoryCounts?.[activeCategory] !== undefined
-        ? categoryCounts[activeCategory]
-        : !activeCluster && totalCount !== undefined
-          ? totalCount
-          : filtered.length
-      : filtered.length;
+  // 平铺模式（活动全部 / 通知全部 / 单分类）：滚动接近底部时自动续载下一批瀑布流卡片
+  useEffect(() => {
+    if (!hasMore || !isSingleFeed) return;
+    const el = loadMoreSentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const triggerNext = () => {
+      if (window.scrollY <= 36) return;
+      if (isPartial) {
+        onRequestFullData?.();
+      }
+      if (filtered.length > visibleCount) {
+        startTransition(() => setVisibleCount((c) => c + PAGE_BATCH));
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          triggerNext();
+        }
+      },
+      { rootMargin: "0px 0px 420px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, isSingleFeed, isPartial, onRequestFullData, filtered.length, visibleCount]);
 
   return (
     <>
       <div className="board-toolbar">
         <div className="board-title-group">
           <div className="board-title">
-            {isSingleFeed && (
+            {showBackLink && (
               <Link
                 href="/"
                 className="board-back-link"
@@ -393,7 +468,7 @@ export function NoticeBoard({
             </span>
           </div>
 
-          {!isSingleFeed && !hasFilters && (
+          {isHomeAll && !hasFilters && (
             <button
               type="button"
               className="board-promo"
@@ -402,8 +477,8 @@ export function NoticeBoard({
               <Sparkles className="board-promo-icon" aria-hidden="true" />
               <span className="board-promo-text">
                 {en
-                  ? "50 official SCAU portals indexed · Star your colleges for instant updates"
-                  : "已聚合华农 50 个学院与部处官网，支持星标常用院系与按学科精准筛选"}
+                  ? "50 official SCAU portals indexed · AI flags key notices & schedules"
+                  : "已聚合华农 50 个学院与部处官网，AI 自动标出重要通知与排期"}
               </span>
               <ArrowUpRight className="board-promo-arrow" aria-hidden="true" />
             </button>
@@ -411,6 +486,24 @@ export function NoticeBoard({
         </div>
 
         <div className="board-tools">
+          <button
+            type="button"
+            className="toolbar-select toolbar-important-btn"
+            data-active={importantOnly ? "true" : undefined}
+            aria-pressed={importantOnly}
+            onClick={() => {
+              if (isPartial) onRequestFullData?.();
+              startTransition(() => setImportantOnly((v) => !v));
+            }}
+            title={en ? "Show important notices only" : "仅查看 AI 标出的重要通知"}
+          >
+            <BellRing className="toolbar-filter-icon" aria-hidden="true" />
+            <span>{en ? "Important" : "重要"}</span>
+            {importantCount > 0 && !isPartial && (
+              <span className="toolbar-badge toolbar-badge-important">{importantCount}</span>
+            )}
+          </button>
+
           <ViewModePicker
             value={viewMode}
             onChange={handleViewModeChange}
@@ -547,6 +640,18 @@ export function NoticeBoard({
             </button>
           )}
 
+          {importantOnly && (
+            <button
+              type="button"
+              className="active-filter-chip active-filter-chip-important"
+              onClick={() => setImportantOnly(false)}
+            >
+              <BellRing aria-hidden="true" />
+              <span>{en ? "Important only" : "仅看重要通知"}</span>
+              <X aria-hidden="true" />
+            </button>
+          )}
+
           {viewMode === "star-only" && (
             <button
               type="button"
@@ -581,7 +686,7 @@ export function NoticeBoard({
         </div>
       )}
 
-      {/* 通知墙主体 */}
+      {/* 通知墙主体（统一扁平瀑布流，像清华知道一样直接全量展示，不再分块切割） */}
       <div id="board-results" className="board-results">
         <span className="sr-only" role="status">
           {en
@@ -589,7 +694,7 @@ export function NoticeBoard({
             : `找到 ${filtered.length} 条通知`}
         </span>
 
-        {sections.length === 0 ? (
+        {filtered.length === 0 ? (
           loadingFull || (isPartial && (hasFilters || Boolean(activeCluster))) ? (
             <div className="empty-state" role="status" aria-live="polite">
               <strong>{en ? "Loading matching notices..." : "正在加载全部通知…"}</strong>
@@ -645,29 +750,14 @@ export function NoticeBoard({
             </div>
           )
         ) : isSingleFeed ? (
-          /* 单分类全页流式布局（不限高度，底部支持加载更多） */
+          /* 活动「全部」/ 通知「全部」/ 单分类 / 搜索：不分类块，统一平铺瀑布流全量展示 */
           (() => {
-            const items = filtered;
-            const visibleItems = items.slice(0, visibleCount);
-            const categoryTrueTotal =
-              !hasFilters &&
-              isPartial &&
-              activeCategory &&
-              categoryCounts?.[activeCategory] !== undefined
-                ? categoryCounts[activeCategory]
-                : items.length;
-            const remainingCount = Math.max(0, categoryTrueTotal - visibleItems.length);
-            const hasMore = remainingCount > 0;
-            const onlyCat = sections[0]?.category;
             let priorityAssigned = 0;
             return (
-              <section
-                className="notice-section notice-section-full"
-                data-tone={onlyCat?.tone}
-              >
+              <section className="notice-feed-flat" aria-label={resolvedHeading}>
                 <WaterfallGrid cols={desktopCols} mobileCols={mobileCols} gap={11}>
                   {visibleItems.map((n, i) => {
-                    const isPriority = Boolean(n.cover) && priorityAssigned < 2;
+                    const isPriority = Boolean(n.cover) && priorityAssigned < 3;
                     if (isPriority) priorityAssigned++;
                     return (
                       <NoticeCard
@@ -686,7 +776,7 @@ export function NoticeBoard({
                 </WaterfallGrid>
 
                 {hasMore && (
-                  <div className="load-more-wrap">
+                  <div ref={loadMoreSentinelRef} className="load-more-wrap">
                     <button
                       type="button"
                       className="plain-button load-more-btn"
@@ -700,9 +790,13 @@ export function NoticeBoard({
                         ? en
                           ? "Loading..."
                           : "正在加载更多…"
-                        : en
-                          ? `Load more (${remainingCount} left)`
-                          : `加载更多（剩余 ${remainingCount} 条）`}
+                        : remainingCount > 0
+                          ? en
+                            ? `Load more (${remainingCount} left)`
+                            : `加载更多（剩余 ${remainingCount} 条）`
+                          : en
+                            ? "Load more"
+                            : "加载更多"}
                     </button>
                   </div>
                 )}
@@ -710,7 +804,7 @@ export function NoticeBoard({
             );
           })()
         ) : (
-          /* 首页/多板块分区瀑布流：首屏仅挂载前 2 板块，滚到底部时自动拉取并展开其余板块 */
+          /* 首页第一个「全部」：保持按分类板块分区瀑布流（参照清华知道 /thu） */
           <>
             <div className="notice-sections">
               {sections.map(({ category, items }, sectionIdx) => {
@@ -781,7 +875,7 @@ export function NoticeBoard({
                             <NoticeCard
                               key={n.id}
                               notice={n}
-                              index={i}
+                              index={sectionIdx === 0 ? i : i + 12}
                               lang={lang}
                               starred={isStarred(n.source)}
                               onOpen={handleOpenNotice}

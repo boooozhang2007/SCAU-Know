@@ -70,6 +70,13 @@
   --amber-soft-light: #fef4e2;
   --amber-soft-dark: #332712;
 
+  --important-ink-light: #c23616;
+  --important-ink-dark: #ff8c75;
+  --important-soft-light: #fdeee9;
+  --important-soft-dark: #3b1c17;
+  --important-edge-light: #f5bfb0;
+  --important-edge-dark: #6b2f24;
+
   --scrollbar-thumb-light: #7c8f86;
   --scrollbar-thumb-dark: #5f756b;
 
@@ -94,6 +101,9 @@
   --border-strong: var(--border-strong-light);
   --amber-ink: var(--amber-ink-light);
   --amber-soft: var(--amber-soft-light);
+  --important-ink: var(--important-ink-light);
+  --important-soft: var(--important-soft-light);
+  --important-edge: var(--important-edge-light);
   --scrollbar-thumb: var(--scrollbar-thumb-light);
   --scrollbar-track: transparent;
   --overlay: var(--overlay-light);
@@ -141,6 +151,9 @@
     --border-strong: var(--border-strong-dark);
     --amber-ink: var(--amber-ink-dark);
     --amber-soft: var(--amber-soft-dark);
+    --important-ink: var(--important-ink-dark);
+    --important-soft: var(--important-soft-dark);
+    --important-edge: var(--important-edge-dark);
     --scrollbar-thumb: var(--scrollbar-thumb-dark);
     --overlay: var(--overlay-dark);
     --shadow-sm: 0 2px 10px -4px rgba(0, 0, 0, 0.35);
@@ -167,6 +180,9 @@
   --border-strong: var(--border-strong-dark);
   --amber-ink: var(--amber-ink-dark);
   --amber-soft: var(--amber-soft-dark);
+  --important-ink: var(--important-ink-dark);
+  --important-soft: var(--important-soft-dark);
+  --important-edge: var(--important-edge-dark);
   --scrollbar-thumb: var(--scrollbar-thumb-dark);
   --overlay: var(--overlay-dark);
   --shadow-sm: 0 2px 10px -4px rgba(0, 0, 0, 0.35);
@@ -194,6 +210,9 @@
     --border-strong: light-dark(var(--border-strong-light), var(--border-strong-dark));
     --amber-ink: light-dark(var(--amber-ink-light), var(--amber-ink-dark));
     --amber-soft: light-dark(var(--amber-soft-light), var(--amber-soft-dark));
+    --important-ink: light-dark(var(--important-ink-light), var(--important-ink-dark));
+    --important-soft: light-dark(var(--important-soft-light), var(--important-soft-dark));
+    --important-edge: light-dark(var(--important-edge-light), var(--important-edge-dark));
     --scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
     --overlay: light-dark(var(--overlay-light), var(--overlay-dark));
   }
@@ -1174,6 +1193,24 @@ svg {
   font-size: 11px;
   font-weight: 700;
 }
+.toolbar-important-btn[data-active="true"] {
+  background: var(--important-soft);
+  border-color: var(--important-edge);
+  color: var(--important-ink);
+}
+.toolbar-badge-important {
+  background: var(--important-soft);
+  color: var(--important-ink);
+}
+.toolbar-important-btn[data-active="true"] .toolbar-badge-important {
+  background: var(--important-ink);
+  color: #ffffff;
+}
+.active-filter-chip-important {
+  border-color: var(--important-edge);
+  background: var(--important-soft);
+  color: var(--important-ink);
+}
 
 /* 下拉菜单 */
 .dropdown-menu {
@@ -1488,6 +1525,10 @@ svg {
   padding: 14px;
 }
 
+.notice-feed-flat {
+  padding-top: 2px;
+}
+
 .section-heading {
   display: flex;
   align-items: center;
@@ -1680,6 +1721,13 @@ svg {
   border-color: color-mix(in srgb, var(--amber-ink) 32%, var(--card-border));
 }
 
+.notice-block[data-important="true"] {
+  border-color: color-mix(in srgb, var(--important-ink) 34%, var(--card-border));
+}
+.notice-block[data-important="true"]:hover {
+  border-color: color-mix(in srgb, var(--important-ink) 56%, var(--card-border));
+}
+
 .notice-cover {
   position: relative;
   display: block;
@@ -1718,6 +1766,23 @@ svg {
   overflow-wrap: anywhere;
   word-break: break-word;
   transition: color 140ms ease;
+}
+
+.notice-important-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 17px;
+  padding: 0 5px;
+  margin-right: 5px;
+  border-radius: 4px;
+  background: var(--important-soft);
+  border: 1px solid var(--important-edge);
+  color: var(--important-ink);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  vertical-align: 1px;
 }
 
 .notice-registration {
@@ -2228,11 +2293,28 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 .detail-submeta-source {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .detail-submeta-source strong {
   font-weight: 600;
   color: var(--foreground);
+}
+.detail-wechat-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, #07c160 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #07c160 11%, transparent);
+  color: #058a44;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+:root[data-scheme="dark"] .detail-wechat-badge {
+  color: #5ee59b;
 }
 
 .source-star-button {
@@ -2472,12 +2554,23 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 }
 .sources-tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-bottom: 12px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: inline proximity;
+  scrollbar-width: none;
+}
+.sources-tabs::-webkit-scrollbar {
+  display: none;
 }
 .sources-tab {
-  height: 28px;
+  position: relative;
+  flex: none;
+  scroll-snap-align: start;
+  height: 30px;
   padding: 0 11px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2485,12 +2578,11 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+    color 120ms ease;
 }
 .sources-tab:hover {
   border-color: var(--border-strong);
@@ -2500,6 +2592,48 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   background: var(--primary-soft);
   border-color: var(--primary-soft-edge);
   color: var(--primary);
+}
+.sources-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 10px -4px;
+  border-block-end: 2px solid currentColor;
+  border-radius: 2px;
+}
+.sources-copy-status {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 0;
+  margin: 0;
+  padding: 0 12px;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 28px;
+  transition: opacity 150ms ease;
+}
+.sources-copy-status[data-visible="true"] {
+  height: auto;
+  margin-bottom: 8px;
+  padding: 2px 12px;
+  border: 1px solid color-mix(in srgb, #07c160 35%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card) 90%, #07c160 10%);
+  color: #058a44;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  opacity: 1;
+}
+:root[data-scheme="dark"] .sources-copy-status[data-visible="true"] {
+  background: color-mix(in srgb, var(--card) 86%, #07c160 14%);
+  color: #5ee59b;
+}
+.sources-copy-status[data-visible="true"][data-failed="true"] {
+  border-color: color-mix(in srgb, #e11d48 35%, transparent);
+  background: color-mix(in srgb, var(--card) 90%, #e11d48 10%);
+  color: #be123c;
 }
 .sources-empty {
   padding: 32px 16px;
@@ -2536,11 +2670,21 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   background: var(--tone-ink, var(--primary-fill));
   flex-shrink: 0;
 }
+.source-item[data-wechat="true"] .source-item-dot {
+  background: #07c160;
+}
 .source-item-info {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
+}
+.source-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .source-item-name {
   font-size: 13px;
@@ -2548,6 +2692,36 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.source-wechat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, #07c160 36%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #07c160 12%, transparent);
+  color: #058a44;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+.source-wechat-pill svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+.source-wechat-pill.is-dual {
+  border-color: color-mix(in srgb, #07c160 26%, transparent);
+  background: color-mix(in srgb, #07c160 7%, transparent);
+  color: #077d3f;
+}
+:root[data-scheme="dark"] .source-wechat-pill,
+:root[data-scheme="dark"] .source-wechat-pill.is-dual {
+  color: #5ee59b;
 }
 .source-item-full {
   font-size: 11px;
@@ -2564,7 +2738,14 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.source-item-count[data-empty="true"] {
+  opacity: 0.65;
+  font-size: 11px;
+}
 .source-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 26px;
   padding: 0 9px;
   border: 1px solid var(--border);
@@ -2573,26 +2754,39 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--foreground);
   font-size: 11.5px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .source-row-btn:hover {
   border-color: var(--primary-soft-edge);
   background: var(--primary-soft);
   color: var(--primary);
 }
+.source-row-btn.is-muted {
+  opacity: 0.45;
+  cursor: default;
+}
+.source-row-btn.is-muted:hover {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
 .source-row-star,
-.source-row-ext {
+.source-row-ext,
+.source-row-copy {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  min-inline-size: 28px;
+  min-block-size: 28px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
   color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 .source-row-star svg,
-.source-row-ext svg {
+.source-row-ext svg,
+.source-row-copy svg {
   width: 13.5px;
   height: 13.5px;
 }
@@ -2605,9 +2799,61 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 .source-row-star[data-starred="true"] svg {
   fill: currentColor;
 }
-.source-row-ext:hover {
+.source-row-ext:hover,
+.source-row-copy:hover {
   border-color: var(--primary-soft-edge);
   color: var(--primary);
+}
+.source-row-copy[data-copied="true"] {
+  border-color: color-mix(in srgb, #07c160 45%, transparent);
+  background: color-mix(in srgb, #07c160 12%, transparent);
+  color: #058a44;
+}
+:root[data-scheme="dark"] .source-row-copy[data-copied="true"] {
+  color: #5ee59b;
+}
+.source-row-copy[data-failed="true"] {
+  border-color: color-mix(in srgb, #e11d48 40%, transparent);
+  color: #be123c;
+}
+@media (max-width: 520px) {
+  .source-item {
+    gap: 6px;
+    padding: 8px 9px;
+  }
+  .source-item-dot {
+    display: none;
+  }
+  .source-item-head {
+    gap: 4px;
+  }
+  .source-wechat-pill {
+    height: 16px;
+    padding: 0 5px;
+    font-size: 9.5px;
+  }
+  .source-wechat-pill svg {
+    display: none;
+  }
+  .source-item-count {
+    font-size: 11px;
+  }
+  .source-row-btn {
+    height: 25px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+  .source-row-star,
+  .source-row-ext,
+  .source-row-copy {
+    min-inline-size: 26px;
+    min-block-size: 26px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sources-copy-status {
+    transition: opacity 120ms ease;
+  }
 }
 
 /* 访问量面板 */
@@ -2927,11 +3173,15 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--muted-foreground);
 }
 
-/* ── 活动日历页（周视图 + 日程列表） ───────────────────────── */
+/* ── 活动日历页（对照清华知道周历面板 + 月历弹窗 + 桌面卡片/移动时间轴） ── */
 .page-shell {
   max-width: 1120px;
   margin: 0 auto;
   padding: 20px 24px 64px;
+}
+
+.calendar-page-shell {
+  max-width: 1180px;
 }
 
 .calendar-page-header {
@@ -2940,9 +3190,10 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 
 .page-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .calendar-title-icon {
   display: inline-grid;
@@ -2954,8 +3205,8 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--primary);
 }
 .calendar-title-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 .page-heading h1 {
   margin: 0;
@@ -2969,41 +3220,8 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--muted-foreground);
 }
 
-.calendar-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.calendar-cat-chip {
-  display: inline-flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--muted-foreground);
-  font-size: 12.5px;
-  font-weight: 600;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease,
-    transform 140ms ease;
-}
-.calendar-cat-chip:hover {
-  border-color: var(--primary-soft-edge);
-  color: var(--primary);
-}
-.calendar-cat-chip[aria-current="page"] {
-  background: var(--primary-soft);
-  border-color: var(--primary-soft-edge);
-  color: var(--primary);
-}
-
 .calendar-panel {
-  padding: 22px 20px 18px;
+  padding: 24px 22px 20px;
   margin-bottom: 20px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -3012,10 +3230,10 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 }
 
 .calendar-week-title {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
   text-align: center;
   font-family: var(--font-numbers);
-  font-size: 23px;
+  font-size: 24px;
   font-weight: 800;
   letter-spacing: -0.015em;
   color: var(--primary);
@@ -3026,50 +3244,61 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  margin-bottom: 18px;
+  gap: 8px;
+  margin-bottom: 20px;
 }
 
-.cal-ctrl-btn,
-.cal-date-picker {
+.cal-ctrl-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-ctrl-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  height: 34px;
-  padding: 0 12px;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 11px;
   background: var(--card);
   color: var(--foreground);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
     color 140ms ease,
     box-shadow 140ms ease,
-    transform 140ms ease;
+    scale 120ms ease;
 }
 .cal-ctrl-icon {
-  width: 34px;
+  width: 38px;
   padding: 0;
 }
-.cal-ctrl-btn svg,
-.cal-date-picker svg {
+.cal-ctrl-btn svg {
   width: 15px;
   height: 15px;
 }
-.cal-ctrl-btn:hover,
-.cal-date-picker:hover {
+.cal-ctrl-btn:hover {
   border-color: var(--primary-soft-edge);
   background: var(--primary-soft);
   color: var(--primary);
+}
+.cal-ctrl-btn:active {
+  scale: 0.96;
 }
 .cal-ctrl-btn[data-active="true"] {
   background: var(--primary-soft);
   border-color: var(--primary-soft-edge);
   color: var(--primary);
+}
+.cal-ctrl-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 .cal-ctrl-star {
   width: 14px;
@@ -3078,28 +3307,167 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 .cal-ctrl-btn[data-active="true"] .cal-ctrl-star {
   fill: currentColor;
 }
-.cal-date-picker input {
-  border: 0;
-  background: transparent;
+.cal-date-trigger {
+  min-width: 116px;
   font-family: var(--font-numbers);
-  font-size: 12.5px;
-  font-weight: 600;
-  outline: none;
-  cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
+/* 原生 Popover 月历选择器（遵循 viewport-aware-dropdowns + natural-interactions） */
+.cal-datepicker-popover {
+  width: 304px;
+  max-width: calc(100vw - 24px);
+  padding: 16px 14px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: var(--shadow-lg);
+  transform-origin: top center;
+  z-index: 60;
+}
+.cal-datepicker-popover:is(:popover-open, .\:popover-open) {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cal-datepicker-popover:is(:popover-open, .\:popover-open) {
+    animation: cal-dp-grow 180ms ease-out both;
+    animation: cal-dp-grow 200ms linear(0, 0.5 18%, 1.04 45%, 0.99 72%, 1) both;
+  }
+}
+@keyframes cal-dp-grow {
+  from {
+    opacity: 0.92;
+    scale: 0.95;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@supports (position-area: block-end) {
+  .cal-datepicker-popover {
+    inset: auto;
+    margin: 8px 0 0;
+    position-area: block-end center;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  }
+}
+@supports not (position-area: block-end) {
+  .cal-datepicker-popover {
+    position: fixed;
+    margin: 0;
+  }
+}
+
+.cal-dp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cal-dp-month {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.cal-dp-nav {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-foreground);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.cal-dp-nav:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.cal-dp-nav svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cal-dp-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin-bottom: 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.cal-dp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px 2px;
+}
+.cal-dp-cell {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0;
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-numbers);
+  font-size: 13.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.cal-dp-cell:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.cal-dp-cell[data-muted="true"] {
+  color: var(--muted-foreground);
+  opacity: 0.45;
+}
+.cal-dp-cell[data-today="true"]:not([data-selected="true"]) {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.cal-dp-cell[data-selected="true"] {
+  background: var(--primary-fill);
+  color: var(--primary-foreground);
+  font-weight: 750;
+}
+.cal-dp-dot {
+  position: absolute;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary-fill);
+}
+.cal-dp-cell[data-selected="true"] .cal-dp-dot {
+  background: var(--primary-foreground);
+}
+
+/* 7 天周切换条 */
 .calendar-week-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .calendar-day-pill {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 10px 6px;
+  gap: 2px;
+  padding: 11px 6px 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--card);
@@ -3109,56 +3477,314 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
     border-color 150ms ease,
     color 150ms ease,
     box-shadow 150ms ease,
-    transform 150ms ease;
+    scale 120ms ease;
 }
 .calendar-day-pill:hover {
   border-color: var(--primary-soft-edge);
   background: var(--section-bg);
 }
-.calendar-day-pill[data-today="true"] {
-  border-color: var(--primary-soft-edge);
+.calendar-day-pill:active {
+  scale: 0.97;
+}
+.calendar-day-pill[data-today="true"]:not([aria-selected="true"]) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 0.5px var(--primary);
 }
 .calendar-day-pill[aria-selected="true"] {
   background: var(--primary-fill);
   border-color: var(--primary-fill);
   color: var(--primary-foreground);
-  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--primary-fill) 60%, transparent);
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--primary-fill),
+    0 8px 20px -8px color-mix(in srgb, var(--primary-fill) 65%, transparent);
 }
 .cal-pill-week {
   font-size: 11.5px;
   font-weight: 600;
-  opacity: 0.78;
-}
-.cal-pill-num {
-  font-family: var(--font-numbers);
-  font-size: 19px;
-  font-weight: 800;
-  line-height: 1.2;
-}
-.cal-pill-count {
-  font-size: 11px;
-  font-weight: 600;
   opacity: 0.72;
 }
-.calendar-day-pill[data-has-events="true"]:not([aria-selected="true"]) .cal-pill-count {
+.calendar-day-pill[data-today="true"]:not([aria-selected="true"]) .cal-pill-week {
   color: var(--primary);
   opacity: 1;
 }
+.cal-pill-num {
+  font-family: var(--font-numbers);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+.cal-pill-count {
+  font-family: var(--font-numbers);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.68;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-day-pill[data-has-events="true"]:not([aria-selected="true"]) .cal-pill-count {
+  color: var(--primary);
+  opacity: 0.95;
+}
 
+/* 桌面端与移动端统一：清华知道手机版同款「左侧时间轴 + 同刻并排/横向滑动卡片」 */
+.cal-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cal-tl-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.cal-tl-rail {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 18px;
+  padding-right: 4px;
+}
+
+.cal-tl-time {
+  font-family: var(--font-numbers);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.cal-tl-time[data-allday="true"] {
+  color: var(--muted-foreground);
+  font-weight: 650;
+}
+
+.cal-tl-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--primary-fill);
+  box-shadow: 0 0 0 3px var(--background);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.cal-tl-dot[data-allday="true"] {
+  background: var(--border-strong);
+}
+
+.cal-tl-line {
+  position: absolute;
+  top: 28px;
+  bottom: -18px;
+  right: 7.5px;
+  width: 1.5px;
+  background: var(--border);
+}
+.cal-tl-row:last-child .cal-tl-line {
+  display: none;
+}
+
+.cal-tl-track {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding-bottom: 16px;
+  min-width: 0;
+}
+.cal-tl-track.is-multi {
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  padding-bottom: 18px;
+}
+
+.cal-event-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1 0 100%;
+  min-width: 0;
+  padding: 16px 18px 15px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--foreground);
+  text-align: left;
+  scroll-snap-align: start;
+  transition:
+    border-color 150ms ease,
+    box-shadow 180ms ease,
+    transform 150ms ease;
+}
+.cal-tl-track[data-count="2"] .cal-event-card {
+  flex: 1 1 calc((100% - 12px) / 2);
+  min-width: 300px;
+}
+.cal-tl-track[data-count="3+"] .cal-event-card {
+  flex: 0 0 clamp(300px, 38%, 410px);
+}
+
+.cal-event-card:hover {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.cal-event-card[data-important="true"] {
+  border-color: color-mix(in srgb, var(--important-ink) 35%, var(--border));
+}
+.cal-event-card[data-important="true"]:hover {
+  border-color: var(--important-ink);
+}
+.cal-event-card:hover .cal-event-title {
+  color: var(--primary);
+}
+
+.cal-event-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.cal-event-thumb {
+  width: 96px;
+  height: 56px;
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--secondary);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  flex-shrink: 0;
+}
+.cal-event-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cal-event-icon-thumb {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  background: var(--tone-tint);
+  color: var(--tone-ink);
+  flex-shrink: 0;
+}
+.cal-event-icon-thumb svg {
+  width: 19px;
+  height: 19px;
+}
+
+.cal-event-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  transition: color 140ms ease;
+}
+
+.cal-event-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.cal-event-time,
+.cal-event-venue {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary);
+  font-weight: 600;
+  min-width: 0;
+}
+.cal-event-time {
+  font-family: var(--font-numbers);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cal-event-time[data-allday="true"] {
+  color: var(--muted-foreground);
+  font-weight: 550;
+}
+.cal-event-venue {
+  max-width: 100%;
+}
+.cal-event-venue span {
+  overflow-wrap: anywhere;
+}
+.cal-event-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  width: 100%;
+}
+.cal-event-audience {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.cal-event-time svg,
+.cal-event-venue svg,
+.cal-event-audience svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.cal-event-source {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+
+/* 全部排期分组视图 */
 .calendar-list {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 28px;
+}
+.cal-all-group {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.cal-all-group-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
 }
 .calendar-day-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .calendar-day-date {
   font-family: var(--font-numbers);
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 750;
 }
 .calendar-day-week {
@@ -3172,126 +3798,89 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
   color: var(--muted-foreground);
 }
 
-.calendar-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.calendar-row-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  width: 100%;
-  padding: 15px 18px;
-  border: 1px solid var(--border);
-  border-radius: 15px;
-  background: var(--card);
-  text-align: left;
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    box-shadow 150ms ease,
-    transform 150ms ease;
-}
-.calendar-row-card:hover {
-  border-color: var(--primary-soft-edge);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-}
-.calendar-row-card:hover .calendar-row-title {
-  color: var(--primary);
-}
-
-.calendar-row-badge {
-  display: inline-grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: var(--tone-tint);
-  color: var(--tone-ink);
-  flex-shrink: 0;
-}
-.calendar-row-badge svg {
-  width: 18px;
-  height: 18px;
-}
-
-.calendar-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
-  flex: 1;
-}
-.calendar-row-title {
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.48;
-  transition: color 140ms ease;
-}
-.calendar-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  font-size: 12.5px;
-  color: var(--muted-foreground);
-}
-.calendar-row-time,
-.calendar-row-venue {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--primary);
-  font-weight: 600;
-}
-.calendar-row-time svg,
-.calendar-row-venue svg {
-  width: 13.5px;
-  height: 13.5px;
-}
-.calendar-row-time[data-allday="true"] {
-  color: var(--muted-foreground);
-  font-weight: 550;
-}
-.calendar-row-cat {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--tone-tint);
-  color: var(--tone-ink);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.calendar-row-source {
-  color: var(--muted-foreground);
-}
-
 .calendar-empty-day {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 48px 20px;
+  gap: 14px;
+  padding: 44px 20px;
   border: 1px dashed var(--border);
   border-radius: 16px;
   text-align: center;
   color: var(--muted-foreground);
-  font-size: 13.5px;
+  font-size: 14px;
 }
 .calendar-empty-day p {
   margin: 0;
 }
+.cal-suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.cal-suggest-label {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.cal-suggest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--primary-soft-edge);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  transition: filter 120ms ease, scale 120ms ease;
+}
+.cal-suggest-btn:hover {
+  filter: brightness(0.96);
+}
+.cal-suggest-btn:active {
+  scale: 0.96;
+}
+.cal-suggest-btn small {
+  font-family: var(--font-numbers);
+  font-size: 11px;
+  opacity: 0.8;
+}
 
 /* ── 采集状态页 ────────────────────────────────────────────── */
 .sources-kpi-grid {
-  max-width: 560px;
+  max-width: 720px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 20px;
+}
+@media (max-width: 640px) {
+  .sources-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.crawl-section-wx-icon {
+  width: 16px;
+  height: 16px;
+  color: #07c160;
+  flex-shrink: 0;
+}
+.crawl-source-wx-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, #07c160 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #07c160 10%, transparent);
+  color: #058a44;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+:root[data-scheme="dark"] .crawl-source-wx-tag {
+  color: #5ee59b;
 }
 .crawl-banner {
   display: flex;
@@ -3356,7 +3945,7 @@ dialog.modal-dialog[open]:where(:not([data-closing]))::backdrop {
 }
 .crawl-source-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -3403,7 +3992,12 @@ a.crawl-source-name:hover {
   color: var(--primary);
 }
 .crawl-source-meta {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--muted-foreground);
 }
@@ -3443,6 +4037,9 @@ a.crawl-source-name:hover {
 .crawl-source-link:hover {
   background: var(--primary-soft);
   color: var(--primary);
+}
+.crawl-source-link.is-placeholder {
+  pointer-events: none;
 }
 .sources-page-footer {
   display: flex;
@@ -3603,6 +4200,37 @@ a.crawl-source-name:hover {
   gap: 5px;
 }
 
+.notice-deadline-chip,
+.notice-audience-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  max-width: 100%;
+  padding: 2px 6.5px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notice-deadline-chip {
+  background: var(--amber-soft);
+  color: var(--amber-ink);
+  font-family: var(--font-numbers);
+  font-variant-numeric: tabular-nums;
+}
+.notice-audience-chip {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+.notice-deadline-chip svg,
+.notice-audience-chip svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
 .notice-att-chip {
   display: inline-flex;
   align-items: center;
@@ -3623,6 +4251,44 @@ a.crawl-source-name:hover {
 .detail-pill-amber {
   background: var(--amber-soft);
   color: var(--amber-ink);
+}
+.detail-pill-important {
+  background: var(--important-soft);
+  border: 1px solid var(--important-edge);
+  color: var(--important-ink);
+}
+
+.detail-important-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--important-edge);
+  border-radius: 13px;
+  background: var(--important-soft);
+  color: var(--important-ink);
+}
+.detail-important-callout svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.detail-important-callout-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.detail-important-callout-body strong {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.detail-important-callout-body span {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--foreground);
 }
 
 .detail-cover-btn,
@@ -4851,10 +5517,25 @@ dialog.lightbox-dialog {
     padding: 16px 14px 48px;
   }
   .calendar-panel {
-    padding: 16px 12px;
+    padding: 18px 12px 14px;
+    border-radius: 16px;
   }
   .calendar-week-title {
-    font-size: 19px;
+    font-size: 20px;
+    margin-bottom: 14px;
+  }
+  .calendar-controls {
+    gap: 7px;
+    margin-bottom: 14px;
+  }
+  .cal-ctrl-star-btn {
+    order: 5;
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 14px;
+  }
+  .cal-ctrl-all-btn {
+    order: 6;
   }
   .calendar-week-strip {
     gap: 5px;
@@ -4863,8 +5544,80 @@ dialog.lightbox-dialog {
     padding: 8px 2px;
     border-radius: 11px;
   }
+  .calendar-day-pill[aria-selected="true"] {
+    box-shadow:
+      0 0 0 2px var(--card),
+      0 0 0 4px var(--primary-fill);
+  }
   .cal-pill-num {
     font-size: 16px;
+  }
+  .cal-pill-count {
+    font-size: 10px;
+  }
+
+  /* 移动端紧凑时间轴比例 */
+  .cal-tl-row {
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .cal-tl-rail {
+    gap: 6px;
+    padding-top: 14px;
+  }
+  .cal-tl-time {
+    font-size: 11.5px;
+  }
+  .cal-tl-dot {
+    width: 7px;
+    height: 7px;
+    margin-top: 4px;
+  }
+  .cal-tl-line {
+    top: 24px;
+    bottom: -14px;
+    right: 7px;
+  }
+  .cal-tl-track {
+    gap: 10px;
+    padding-bottom: 14px;
+  }
+  .cal-tl-track.is-multi {
+    scrollbar-width: none;
+    padding-right: 6px;
+  }
+  .cal-tl-track.is-multi::-webkit-scrollbar {
+    display: none;
+  }
+  .cal-tl-track .cal-event-card {
+    flex: 1 0 100%;
+    min-width: 0;
+    padding: 13px 13px 12px;
+    gap: 9px;
+  }
+  .cal-tl-track.is-multi .cal-event-card,
+  .cal-tl-track[data-count="2"] .cal-event-card,
+  .cal-tl-track[data-count="3+"] .cal-event-card {
+    flex: 0 0 82%;
+    min-width: 0;
+  }
+  .cal-event-thumb {
+    width: 72px;
+    height: 44px;
+    border-radius: 7px;
+  }
+  .cal-event-icon-thumb {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+  .cal-event-title {
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .cal-event-meta {
+    gap: 5px;
+    font-size: 12.5px;
   }
   .crawl-source-list {
     grid-template-columns: minmax(0, 1fr);
