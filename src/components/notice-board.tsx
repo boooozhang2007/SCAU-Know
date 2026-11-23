@@ -28,6 +28,7 @@ import {
   formatShortTime,
   formatShortTimeCompact,
   matchesQuery,
+  meaningfulSummary,
   safeParseTimestamp,
   sortByPublished,
   subjectName,
@@ -55,6 +56,46 @@ const DetailSheet = dynamic(
 const HOME_SECTION_LIMIT = 18;
 /** 平铺瀑布流（活动全部 / 通知全部 / 单分类 / 搜索）每批展示条数 */
 const PAGE_BATCH = 36;
+
+/** 基于字段的确定性卡片高度估算（px），使 SSR 与首次水合最短列分配即可逼近真实列高 */
+function estimateNoticeCardWeight(n: Notice, colCount: number): number {
+  const estColW =
+    colCount <= 2 ? 175 : colCount === 3 ? 280 : colCount === 4 ? 270 : colCount === 5 ? 250 : 230;
+  let h = 48; // body padding + border + meta 时间/来源行
+
+  if (n.cover) {
+    h += Math.round(estColW / 2.25);
+  }
+
+  const charsPerLine = Math.max(10, Math.floor((estColW - 26) / 14));
+  const isImportant = Boolean(n.important ?? n.ai?.isImportant);
+  const badgeChars = (isImportant ? 4 : 0) + (n.registration ? 2 : 0);
+  const titleLines = Math.min(3, Math.max(1, Math.ceil((n.title.length + badgeChars) / charsPerLine)));
+  h += titleLines * 21;
+
+  const excerpt = !n.cover ? meaningfulSummary(n.title, n.summary) : null;
+  if (excerpt) {
+    const excerptCharsPerLine = Math.max(12, Math.floor((estColW - 26) / 12.2));
+    const excerptLines = Math.min(2, Math.max(1, Math.ceil(excerpt.length / excerptCharsPerLine)));
+    h += 7 + excerptLines * 19;
+  }
+
+  const audienceList = n.audience ?? n.ai?.audience ?? [];
+  const hasAudience = audienceList.some(
+    (a) => Boolean(a) && a !== "全校师生" && a !== "全校" && a.length <= 12,
+  );
+  const attCount = n.attachments?.length ?? n.attachmentCount ?? 0;
+  const hasEvent = Boolean(n.startsAt);
+  const hasDeadline = !hasEvent && Boolean(n.registrationDeadline);
+  const chipCount =
+    (hasEvent ? 1 : 0) + (hasDeadline ? 1 : 0) + (hasAudience ? 1 : 0) + (attCount > 0 ? 1 : 0);
+
+  if (chipCount > 0) {
+    h += 7 + (chipCount >= 3 || (hasEvent && Boolean(n.venue)) ? 44 : 24);
+  }
+
+  return h;
+}
 
 export function NoticeBoard({
   notices,
@@ -384,6 +425,10 @@ export function NoticeBoard({
   const visibleItems = useMemo(
     () => filtered.slice(0, visibleCount),
     [filtered, visibleCount],
+  );
+  const visibleWeights = useMemo(
+    () => visibleItems.map((n) => estimateNoticeCardWeight(n, desktopCols)),
+    [visibleItems, desktopCols],
   );
   const remainingCount = Math.max(0, boardTotalDisplay - visibleItems.length);
   const hasMore = isSingleFeed && (remainingCount > 0 || (isPartial && !hasFilters));
@@ -755,7 +800,12 @@ export function NoticeBoard({
             let priorityAssigned = 0;
             return (
               <section className="notice-feed-flat" aria-label={resolvedHeading}>
-                <WaterfallGrid cols={desktopCols} mobileCols={mobileCols} gap={11}>
+                <WaterfallGrid
+                  cols={desktopCols}
+                  mobileCols={mobileCols}
+                  gap={11}
+                  weights={visibleWeights}
+                >
                   {visibleItems.map((n, i) => {
                     const isPriority = Boolean(n.cover) && priorityAssigned < 3;
                     if (isPriority) priorityAssigned++;
@@ -866,7 +916,14 @@ export function NoticeBoard({
                           : `${category.name}通知列表`
                       }
                     >
-                      <WaterfallGrid cols={desktopCols} mobileCols={mobileCols} gap={10}>
+                      <WaterfallGrid
+                        cols={desktopCols}
+                        mobileCols={mobileCols}
+                        gap={10}
+                        weights={previewItems.map((n) =>
+                          estimateNoticeCardWeight(n, desktopCols),
+                        )}
+                      >
                         {previewItems.map((n, i) => {
                           const isPriority =
                             sectionIdx === 0 && Boolean(n.cover) && priorityAssigned < 2;

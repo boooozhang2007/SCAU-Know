@@ -4,6 +4,7 @@
 
 import { CRAWL_SOURCES, enabledSources, type CrawlSource } from "./sources";
 import { canonicalNoticeKey, runCrawl, type CrawlReport, type CrawledNotice } from "./engine";
+import { isAttachmentOnlyText, todayCstYmd } from "./parse";
 import { wechatMode, crawlWechatRss, crawlWechatWemp } from "./wechat";
 import { mergeNotices, readNotices, writeNotices, readState, writeState, saveReport } from "./store";
 import { enrichNotice } from "@/lib/ai/enrich";
@@ -29,6 +30,8 @@ export interface RunOptions {
   runEnrich?: boolean;
   /** 是否对新增条目运行监控提醒引擎 */
   runAlerts?: boolean;
+  /** 强制重抓所有已收录条目（关闭增量跳过） */
+  forceRefetch?: boolean;
   /** 进度回调 */
   onProgress?: (msg: string) => void;
 }
@@ -69,15 +72,41 @@ export async function runFullCrawl(opts: RunOptions = {}): Promise<RunResult> {
   let seen: string[] = [];
 
   if (sources.length > 0 && opts.only?.[0] !== "__wechat_only__") {
-    log(`开始抓取 ${sources.length} 个站点`);
-    // 已有正文的条目不必每轮重抓详情页：把它作为 knownDetails 传下去，只拉新条目的详情。
-    const existingNotices = await readNotices();
-    const knownDetails = new Set(
-      existingNotices
-        .filter((n) => (n.paragraphs?.length ?? 0) > 0 || (n.attachments?.length ?? 0) > 0)
-        .map((n) => canonicalKeyOf(n.url)),
-    );
-    log(`已知正文 ${knownDetails.size} 条，本轮只抓新条目详情`);
+    const skipComplete = new Set<string>();
+    if (!opts.forceRefetch) {
+      const existingNotices = await readNotices();
+      const todayYmd = todayCstYmd();
+      for (const n of existingNotices) {
+        if (!n.url) continue;
+        // 仅跳过内容完整、封面已本地化、发布日期合法非未来的已有通知；
+        // 历史脏数据（如未来日期、缺正文、未镜像微信图床图）留在重抓队列自动自愈
+        const hasBody =
+          Boolean(n.requiresAuth) ||
+          (Boolean(n.paragraphs?.length) && !n.paragraphs.every(isAttachmentOnlyText)) ||
+          Boolean(
+            n.blocks?.some(
+              (b) =>
+                (b.type === "text" && !isAttachmentOnlyText(b.text)) ||
+                (b.type === "table") ||
+                (b.type === "image"),
+            ),
+          );
+        const coverOk =
+          !n.cover ||
+          n.cover.startsWith("/api/media/") ||
+          n.cover.startsWith("/media/");
+        const pubMs = Date.parse(n.publishedAt);
+        const pubYmd = !Number.isNaN(pubMs)
+          ? todayCstYmd(new Date(pubMs))
+          : "";
+        const dateOk = Boolean(pubYmd && pubYmd <= todayYmd);
+        if (hasBody && coverOk && dateOk) {
+          skipComplete.add(canonicalKeyOf(n.url));
+        }
+      }
+    }
+
+    log(`开始抓取 ${sources.length} 个站点（增量跳过池 ${skipComplete.size} 条）`);
     const siteRes = await runCrawl({
       sources,
       limitPerSource: opts.limitPerSource ?? 20,
@@ -85,10 +114,17 @@ export async function runFullCrawl(opts: RunOptions = {}): Promise<RunResult> {
       parseAttachments: opts.parseAttachments ?? opts.fetchDetail ?? true,
       mirrorImages: opts.mirrorImages ?? opts.fetchDetail ?? true,
       concurrency: opts.concurrency ?? 3,
-      knownDetails,
+      seen: skipComplete.size > 0 ? skipComplete : undefined,
+      knownDetails: skipComplete.size > 0 ? skipComplete : undefined,
+      forceDetail: opts.forceRefetch,
       onProgress: (r, i, total) => {
+        if (!r.ok) {
+          log(`[${i + 1}/${total}] ${r.name} — 失败：${r.error} (${r.durationMs}ms)`);
+          return;
+        }
+        const skipInfo = r.skipped ? ` / ${r.skipped} 条已入库跳过` : "";
         log(
-          `[${i + 1}/${total}] ${r.name} — ${r.ok ? `${r.listed} 条列表 / ${r.added} 条入库` : `失败：${r.error}`} (${r.durationMs}ms)`,
+          `[${i + 1}/${total}] ${r.name} — ${r.listed} 条列表 / ${r.added} 条新抓${skipInfo} (${r.durationMs}ms)`,
         );
       },
     });

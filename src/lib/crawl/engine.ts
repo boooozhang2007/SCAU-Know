@@ -16,6 +16,7 @@ import {
   extractArticle,
   isAttachmentOnlyText,
   titleMatches,
+  todayCstYmd,
   type ParsedItem,
 } from "./parse";
 import { downloadAndParseAttachments } from "./attachments";
@@ -56,6 +57,8 @@ export interface SourceReport {
   listed: number;
   fetched: number;
   added: number;
+  /** 命中增量游标直接跳过的已入库条数 */
+  skipped?: number;
   error?: string;
   durationMs: number;
 }
@@ -121,7 +124,10 @@ export function toneOf(category: string): string {
 export function normalizeUrl(raw: string): string {
   try {
     const u = new URL(raw);
-    if (u.hostname === "mp.weixin.qq.com" && u.protocol === "http:") {
+    if (
+      (u.hostname === "mp.weixin.qq.com" || u.hostname.endsWith(".scau.edu.cn")) &&
+      u.protocol === "http:"
+    ) {
       u.protocol = "https:";
     }
     // 微信读书侧返回的公众号短链把 base64url 的 `_` 写成了 `~`，
@@ -209,6 +215,9 @@ export async function fetchPage(
       return { html, finalUrl, requiresAuth };
     } catch (e) {
       lastErr = e;
+      if (attempt < retries) {
+        await sleep(500 * (attempt + 1));
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -361,7 +370,13 @@ export async function hydrateNoticeDetail(
   }
 
   const detail = extractArticle(page.html, url);
-  if (detail.pageTitle && !titleMatches(title, detail.pageTitle)) {
+  const candidateTitles =
+    detail.candidateTitles.length > 0
+      ? detail.candidateTitles
+      : detail.pageTitle
+        ? [detail.pageTitle]
+        : [];
+  if (candidateTitles.length > 0 && !candidateTitles.some((pt) => titleMatches(title, pt))) {
     return empty;
   }
 
@@ -496,7 +511,24 @@ export async function crawlSource(
       }
     }
 
-    const picked = items.slice(0, limit);
+    // 列表已按发布日期倒序排列：放大扫描窗并跳过已在库内完整收录的 URL，
+    // 确保跨栏目排在 11~30 位的新通知依然能被抓到，同时免去旧文与旧 PDF 重复请求
+    const scanWindow = Math.max(limit * 3, 30);
+    const candidates = items.slice(0, scanWindow);
+    const seenSet = opts.forceDetail ? undefined : opts.seen;
+    const picked: ParsedItem[] = [];
+    let skipped = 0;
+
+    for (const item of candidates) {
+      const canon = canonicalNoticeKey(normalizeUrl(item.url));
+      if (seenSet?.has(canon)) {
+        skipped++;
+        seenUrls.push(canon);
+        continue;
+      }
+      picked.push(item);
+      if (picked.length >= limit) break;
+    }
 
     // 详情抓取（限并发 4），完成校验、图片镜像、附件解析与内嵌 PDF 提升；
     // 已经抓过正文的条目直接复用列表信息，避免每轮把同一批详情页重抓一遍。
@@ -536,6 +568,13 @@ export async function crawlSource(
           }),
         );
 
+    const todayYmd = todayCstYmd();
+    const clampValidDate = (d: string | null): string | null => {
+      if (!d) return null;
+      const ymd = d.slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(ymd) && ymd <= todayYmd ? d : null;
+    };
+
     for (let i = 0; i < picked.length; i++) {
       const item = picked[i];
       const detail = details[i];
@@ -544,18 +583,24 @@ export async function crawlSource(
       const url = normalizeUrl(item.url);
       seenUrls.push(canonicalNoticeKey(url));
 
-      const listDate = item.date ?? dateFromUrl(item.url);
-      const pageDate = detail.publishedAt ?? null;
+      const urlDate = clampValidDate(dateFromUrl(item.url));
+      const listDate = clampValidDate(item.date) ?? urlDate;
+      const pageDate = clampValidDate(detail.publishedAt ?? null);
       const publishedAt =
         pageDate && pageDate.includes("T")
           ? pageDate
-          : listDate ?? pageDate ?? new Date().toISOString().slice(0, 10);
+          : listDate ?? pageDate ?? todayYmd;
 
-      const iso = /^\d{4}-\d{2}-\d{2}$/.test(publishedAt)
-        ? `${publishedAt}T00:00:00+08:00`
-        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(publishedAt)
-          ? `${publishedAt.length === 16 ? `${publishedAt}:00` : publishedAt}+08:00`
-          : new Date(publishedAt).toISOString();
+      let iso: string;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(publishedAt)) {
+        // 当天首次发现且页面无精确时分的官网通知，记录发现时的北京时间时分，避免被 00:00 压在当天公众号后面；
+        // 往日纯日期继续保持 00:00:00+08:00，不伪造历史时刻。
+        iso = publishedAt === todayYmd ? nowCstIso() : `${publishedAt}T00:00:00+08:00`;
+      } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(publishedAt)) {
+        iso = `${publishedAt.length === 16 ? `${publishedAt}:00` : publishedAt}+08:00`;
+      } else {
+        iso = new Date(publishedAt).toISOString();
+      }
 
       const category = inferCategory(source, item.title);
       const articleId = url.match(/\/c\d+a(\d+)\/page\./) ?? url.match(/[?&]id=(\d+)/);
@@ -596,6 +641,7 @@ export async function crawlSource(
         listed: items.length,
         fetched: picked.length,
         added: notices.length,
+        skipped,
         durationMs: Date.now() - started,
       },
     };
@@ -615,6 +661,15 @@ export async function crawlSource(
       },
     };
   }
+}
+
+function nowCstIso(now = new Date()): string {
+  const shifted = new Date(now.getTime() + 8 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}` +
+    `T${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}+08:00`
+  );
 }
 
 function hash(s: string): string {
@@ -650,6 +705,9 @@ export async function runCrawl(opts: RunCrawlOptions): Promise<{
   const reports: SourceReport[] = [];
 
   await mapLimit(opts.sources, concurrency, async (source, i) => {
+    if (i > 0 && i < concurrency) {
+      await sleep(i * 250);
+    }
     const res = await crawlSource(source, opts);
     allNotices.push(...res.notices);
     allSeen.push(...res.seen);

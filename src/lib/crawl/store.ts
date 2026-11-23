@@ -73,10 +73,46 @@ export async function writeState(state: StoreState): Promise<void> {
   await writeJson(STATE_FILE, state);
 }
 
+function cstYmdAndHasClock(iso: string | undefined): {
+  ymd: string;
+  hasClock: boolean;
+  ms: number;
+} | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  const shifted = new Date(ms + 8 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+  const hasClock = shifted.getUTCHours() !== 0 || shifted.getUTCMinutes() !== 0;
+  return { ymd, hasClock, ms };
+}
+
+function todayCstYmdStore(): string {
+  const shifted = new Date(Date.now() + 8 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
 /** 合并字段：新抓条目更新或补齐封面/正文块/附件/AI 元数据 */
 function mergeRecord(prev: CrawledNotice | undefined, next: CrawledNotice): CrawledNotice {
   if (!prev) return next;
-  const newerTime = new Date(next.publishedAt) > new Date(prev.publishedAt);
+  const prevDt = cstYmdAndHasClock(prev.publishedAt);
+  const nextDt = cstYmdAndHasClock(next.publishedAt);
+  const todayYmd = todayCstYmdStore();
+
+  const prevFuture = !prevDt || prevDt.ymd > todayYmd;
+  const nextValid = Boolean(nextDt && nextDt.ymd <= todayYmd);
+  const sameDay = Boolean(prevDt && nextDt && prevDt.ymd === nextDt.ymd);
+
+  // 若旧时间戳为未来日期脏数据且新时间戳合法，强制修正为新时间戳；
+  // 同日重抓且旧记录已带精确时分时保留原时间，避免重复刷新排序；
+  // 只有旧记录为 00:00 且新记录带精确时分，或新记录日期严格更新且非未来时采用新时间戳。
+  const useNextTime =
+    (prevFuture && nextValid) ||
+    (nextValid && sameDay && !prevDt!.hasClock && Boolean(nextDt?.hasClock)) ||
+    (nextValid && Boolean(prevDt) && nextDt!.ymd > prevDt!.ymd);
+  const resolvedPublishedAt = useNextTime ? next.publishedAt : prev.publishedAt;
   const prevParaEmptyOrAtt =
     !prev.paragraphs?.length || prev.paragraphs.every(isAttachmentOnlyText);
   const nextParaMeaningful =
@@ -131,7 +167,8 @@ function mergeRecord(prev: CrawledNotice | undefined, next: CrawledNotice): Craw
 
   return {
     ...prev,
-    ...(newerTime ? next : {}),
+    ...(useNextTime ? next : {}),
+    publishedAt: resolvedPublishedAt,
     cover: mergedCover,
     blocks: mergedBlocks,
     paragraphs: useNextParas ? next.paragraphs : prev.paragraphs,
@@ -169,10 +206,13 @@ export async function mergeNotices(
     const prev = map.get(key);
     const merged = mergeRecord(prev, n);
     map.set(key, merged);
+    const prevTimeValid = Boolean(prev && cstYmdAndHasClock(prev.publishedAt));
+    const prevYmd = prev ? cstYmdAndHasClock(prev.publishedAt)?.ymd : undefined;
+    const nextYmd = cstYmdAndHasClock(n.publishedAt)?.ymd;
     if (!prev) {
       added++;
       newItems.push(merged);
-    } else if (new Date(n.publishedAt) > new Date(prev.publishedAt)) {
+    } else if (!prevTimeValid || (prevYmd && nextYmd && nextYmd > prevYmd)) {
       added++;
     }
   }

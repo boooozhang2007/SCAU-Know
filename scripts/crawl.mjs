@@ -59,7 +59,7 @@ async function main() {
 
   const { runFullCrawl } = await import("../src/lib/crawl/runner.ts");
   const only = val("--only", "")
-    .split(",")
+    .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 
@@ -72,6 +72,7 @@ async function main() {
     includeWechat: has("--no-wechat") ? false : undefined,
     runEnrich: has("--no-enrich") ? false : undefined,
     runAlerts: has("--no-alerts") ? false : undefined,
+    forceRefetch: has("--force-refetch") || has("--force-detail"),
     concurrency: Number(val("--concurrency", "3")),
     onProgress: (m) => console.log(m),
   });

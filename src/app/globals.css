@@ -1672,10 +1672,9 @@ svg {
 
 .waterfall-col {
   display: flex;
-  flex: 1 1 0;
+  flex: 1 1 0%;
   flex-direction: column;
-  min-width: 0;
-  width: 0;
+  min-inline-size: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -5440,7 +5439,15 @@ dialog.lightbox-dialog {
   }
   .board-tools {
     width: 100%;
+    flex-wrap: wrap;
     justify-content: flex-start;
+    gap: 6px;
+  }
+  .board-tools .toolbar-select {
+    height: 33px;
+    padding: 0 9px;
+    gap: 5px;
+    font-size: 12px;
   }
   .board-tools .column-control {
     margin-left: auto;

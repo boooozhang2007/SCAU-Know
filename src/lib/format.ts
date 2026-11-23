@@ -173,13 +173,18 @@ export function dayDiffCst(iso: string, now = new Date()): number {
   return Math.round((target - base) / 86400000);
 }
 
-/** 卡片上的短时间：今天 10:30 / 昨天 16:40 / 前天 / 11月18日 */
+/** 卡片上的短时间：今年显示「今天 10:30 / 昨天 16:40 / 11月18日」，跨年显示「2025年12月24日」 */
 export function formatShortTime(
   iso: string,
   now = new Date(),
   lang: "zh" | "en" = "zh",
 ): string {
-  const { hh, mm, m, d } = toCstParts(iso);
+  const { y, hh, mm, m, d } = toCstParts(iso);
+  const nowYear = toCstParts(now.toISOString()).y;
+  if (y !== nowYear) {
+    return lang === "en" ? `${y}/${m}/${d}` : `${y}年${m}月${d}日`;
+  }
+
   const diff = dayDiffCst(iso, now);
   const hasClock = !(hh === 0 && mm === 0);
   const clock = `${pad(hh)}:${pad(mm)}`;
@@ -205,13 +210,18 @@ export function formatShortTime(
   return `${m}月${d}日`;
 }
 
-/** 移动端紧凑写法 */
+/** 移动端紧凑写法：今年显示「今天 / 11/18」，跨年显示「25/12/24」 */
 export function formatShortTimeCompact(
   iso: string,
   now = new Date(),
   lang: "zh" | "en" = "zh",
 ): string {
-  const { hh, mm, m, d } = toCstParts(iso);
+  const { y, hh, mm, m, d } = toCstParts(iso);
+  const nowYear = toCstParts(now.toISOString()).y;
+  if (y !== nowYear) {
+    return `${String(y).slice(-2)}/${m}/${d}`;
+  }
+
   const diff = dayDiffCst(iso, now);
   const hasClock = !(hh === 0 && mm === 0);
   const clock = `${pad(hh)}:${pad(mm)}`;

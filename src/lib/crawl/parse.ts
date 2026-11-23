@@ -45,7 +45,57 @@ export function decodeText(s: string): string {
 }
 
 const NAV_NOISE =
-  /^(查看详情|更多|详情|联系我们|首页|上一页|下一页|尾页|English|学校主页|进入导航|管理登录|返回|打印|关闭|阅读全文)$/;
+  /^(查看详情|更多|详情|联系我们|首页|上一页|下一页|尾页|English|学校主页|华农主页|网站首页|进入导航|管理登录|返回|打印|关闭|阅读全文)$/;
+
+/** 北京时间今日 YYYY-MM-DD */
+export function todayCstYmd(now = new Date()): string {
+  const shifted = new Date(now.getTime() + 8 * 3600 * 1000);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** 从 WebPlus URL 路径提取 /YYYY/MMDD/ -> YYYY-MM-DD */
+export function dateFromWebplusUrl(url: string): string | null {
+  const m = url.match(/\/(20\d{2})\/(\d{2})(\d{2})\/c\d+a\d+\/page\./i);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** 从 URL 提取单站文章数字 ID（用于同日排序兜底：ID 越大越新） */
+export function articleIdFromUrl(url: string): number {
+  const m = url.match(/\/c\d+a(\d+)\/page\./i) ?? url.match(/[?&]id=(\d+)/i);
+  return m ? Number(m[1]) || 0 : 0;
+}
+
+function dayNumFromYmd(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+/**
+ * 结合列表文本日期与 WebPlus URL 路径日期，过滤未来日期并纠正多文章容器跨条目借用日期。
+ */
+export function resolveListItemDate(
+  picked: string | null,
+  urlDate: string | null,
+  todayYmd: string,
+): string | null {
+  const validPicked = picked && picked <= todayYmd ? picked : null;
+  const validUrl = urlDate && urlDate <= todayYmd ? urlDate : null;
+  if (!validPicked) return validUrl;
+  if (!validUrl) return validPicked;
+  // 若列表周边拾取的日期与 URL 归档日相差超过 45 天，说明容器块跨了条目，优先信任 URL 归档日
+  if (Math.abs(dayNumFromYmd(validPicked) - dayNumFromYmd(validUrl)) > 45) {
+    return validUrl;
+  }
+  return validPicked;
+}
 
 /** 从文本块中提取第一个合法日期 */
 function pickDate(block: string): string | null {
@@ -122,8 +172,9 @@ function normalizeTitle(raw: string): string {
 export function parseWebplusList(html: string, baseUrl: string): ParsedItem[] {
   const items: ParsedItem[] = [];
   const seen = new Set<string>();
+  const todayYmd = todayCstYmd();
 
-  const push = (rawHref: string, titleRaw: string, date: string | null) => {
+  const push = (rawHref: string, titleRaw: string, rawDate: string | null) => {
     let href = rawHref.trim();
     if (!href || /^(javascript|mailto|tel):/i.test(href)) return;
     try {
@@ -136,7 +187,8 @@ export function parseWebplusList(html: string, baseUrl: string): ParsedItem[] {
     if (!title || title.length < 4 || NAV_NOISE.test(title)) return;
     if (seen.has(href)) return;
     seen.add(href);
-    items.push({ url: href, title: title.slice(0, 180), date });
+    const resolvedDate = resolveListItemDate(rawDate, dateFromWebplusUrl(href), todayYmd);
+    items.push({ url: href, title: title.slice(0, 180), date: resolvedDate });
   };
 
   // 策略一：li 块内解析（覆盖大多数模板）
@@ -152,7 +204,7 @@ export function parseWebplusList(html: string, baseUrl: string): ParsedItem[] {
     collectFromBlock(m[0], push);
   }
 
-  // 策略三：兜底，直接扫描 a 标签并用邻近文本补日期
+  // 策略三：兜底，直接扫描 a 标签并用紧邻上下文补日期
   const aRe = /<a[^>]+href=['"]([^'"]+)['"]([^>]*)>([\s\S]{0,400}?)<\/a>/gi;
   let a: RegExpExecArray | null;
   while ((a = aRe.exec(html))) {
@@ -160,13 +212,20 @@ export function parseWebplusList(html: string, baseUrl: string): ParsedItem[] {
     if (!WEBPLUS_ART.test(href)) continue;
     const attrs = a[2] ?? "";
     const titleAttr = attrs.match(/\btitle=['"]([^'"]{4,300})['"]/i);
-    const ctx = html.slice(Math.max(0, a.index - 400), a.index + 600);
+    const ctx = html.slice(Math.max(0, a.index - 120), Math.min(html.length, a.index + a[0].length + 220));
     push(href, titleAttr ? titleAttr[1] : (a[3] ?? ""), pickDate(ctx));
   }
 
-  // 有日期的条目优先（导航链接通常没有日期）
+  // 有日期的条目优先（导航链接通常没有日期），并严格按日期 DESC + 文章 ID DESC 排序，
+  // 避免首页轮播/置顶旧闻或 2018 年侧栏导航把最新通知公告挤出前 N 条
   const dated = items.filter((i) => i.date);
-  return dated.length >= 3 ? dated : items;
+  const pool = dated.length >= 3 ? dated : items;
+  return [...pool].sort((x, y) => {
+    const dx = x.date ?? "0000-00-00";
+    const dy = y.date ?? "0000-00-00";
+    if (dy !== dx) return dy.localeCompare(dx);
+    return articleIdFromUrl(y.url) - articleIdFromUrl(x.url);
+  });
 }
 
 /** 在一个容器块内找出所有文章链接并推送 */
@@ -176,14 +235,27 @@ function collectFromBlock(
 ) {
   // 用非贪婪匹配 href，允许 title 属性内含引号
   const aRe = /<a\s[^>]*?href=['"]([^'"]+)['"][^>]*>([\s\S]{0,400}?)<\/a>/gi;
+  const matches: RegExpExecArray[] = [];
   let a: RegExpExecArray | null;
-  const date = pickDate(block);
   while ((a = aRe.exec(block))) {
-    const href = a[1];
-    if (!WEBPLUS_ART.test(href)) continue;
-    const full = a[0];
-    const titleAttr = full.match(/\btitle=(['"])([\s\S]*?)\1/i);
-    push(href, titleAttr ? titleAttr[2] : (a[2] ?? ""), date);
+    if (WEBPLUS_ART.test(a[1])) matches.push(a);
+  }
+  if (matches.length === 0) return;
+
+  if (matches.length === 1) {
+    const m0 = matches[0];
+    const titleAttr = m0[0].match(/\btitle=(['"])([\s\S]*?)\1/i);
+    push(m0[1], titleAttr ? titleAttr[2] : (m0[2] ?? ""), pickDate(block));
+    return;
+  }
+
+  // 多链接容器（如跨多条通知的大 div/tr）：逐条取链接紧邻局部窗口，禁止把首条日期广播给所有链接
+  for (const m of matches) {
+    const titleAttr = m[0].match(/\btitle=(['"])([\s\S]*?)\1/i);
+    const winStart = Math.max(0, m.index - 80);
+    const winEnd = Math.min(block.length, m.index + m[0].length + 140);
+    const localCtx = block.slice(winStart, winEnd);
+    push(m[1], titleAttr ? titleAttr[2] : (m[2] ?? ""), pickDate(localCtx));
   }
 }
 
@@ -494,6 +566,23 @@ function extractBalancedDiv(html: string, openRe: RegExp): string | null {
   return html.slice(innerStart, Math.min(html.length, innerStart + 40000));
 }
 
+function isGenericHeading(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4) return true;
+  if (NAV_NOISE.test(t) || NAV_TITLE.test(t)) return true;
+  if (/^(?:学校主页|华南农业大学|华农主页|网站首页|首页|主站|欢迎访问)$/.test(t)) {
+    return true;
+  }
+  if (
+    /^华南农业大学[\u4e00-\u9fa5]{1,18}(?:学院|处|部|馆|中心|研究院|委员会|办公室|网)$/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** 文章页正文抽取（WebPlus 的 .wp_articlecontent / v_news_content） */
 export function extractArticle(
   html: string,
@@ -510,21 +599,29 @@ export function extractArticle(
   startsAt: string | null;
   /** 页面自身的标题，用于校验列表标题是否对得上 */
   pageTitle: string | null;
+  /** 页面中提取到的所有有效标题候选（含专用文章标题 class、非导航 h1、<title>） */
+  candidateTitles: string[];
 } {
+  const BODY_CONTAINER_PATTERNS = [
+    /<div\b[^>]*class=['"][^'"]*\bwp_articlecontent\b[^'"]*['"][^>]*>/i,
+    /<div\b[^>]*id=['"]v_news_content['"][^>]*>/i,
+    /<div\b[^>]*class=['"][^'"]*\barticle-content\b[^'"]*['"][^>]*>/i,
+    /<div\b[^>]*class=['"][^'"]*\bread-content\b[^'"]*['"][^>]*>/i,
+  ];
+  let bodyStartIdx = -1;
+  for (const re of BODY_CONTAINER_PATTERNS) {
+    const m = re.exec(html);
+    if (m && (bodyStartIdx < 0 || m.index < bodyStartIdx)) {
+      bodyStartIdx = m.index;
+    }
+  }
+  const metaScope = html.slice(0, bodyStartIdx > 0 ? bodyStartIdx : Math.min(html.length, 12000));
+
   const body =
-    extractBalancedDiv(
-      html,
-      /<div\b[^>]*class=['"][^'"]*\bwp_articlecontent\b[^'"]*['"][^>]*>/i,
-    ) ??
-    extractBalancedDiv(html, /<div\b[^>]*id=['"]v_news_content['"][^>]*>/i) ??
-    extractBalancedDiv(
-      html,
-      /<div\b[^>]*class=['"][^'"]*\barticle-content\b[^'"]*['"][^>]*>/i,
-    ) ??
-    extractBalancedDiv(
-      html,
-      /<div\b[^>]*class=['"][^'"]*\bread-content\b[^'"]*['"][^>]*>/i,
-    ) ??
+    extractBalancedDiv(html, BODY_CONTAINER_PATTERNS[0]) ??
+    extractBalancedDiv(html, BODY_CONTAINER_PATTERNS[1]) ??
+    extractBalancedDiv(html, BODY_CONTAINER_PATTERNS[2]) ??
+    extractBalancedDiv(html, BODY_CONTAINER_PATTERNS[3]) ??
     "";
 
   const paragraphs: string[] = [];
@@ -710,16 +807,34 @@ export function extractArticle(
     );
   }
 
-  // 发布时间：优先带时分（发布时间：2026-11-21 10:30），其次纯日期
-  const dtM = html.match(
-    /(?:发布时间|发布日期|时\s*间)[:：\s]*(?:<\/?[^>]*>\s*)*(20\d{2})[-/年.](\d{1,2})[-/月.](\d{1,2})日?\s*(?:(\d{1,2})[:：](\d{2}))?/,
+  // 发布时间：仅从正文之前的头部/元信息区（或明确 arti_update/publish_time class 块）提取，避免误抓正文活动/会议日期
+  const todayYmd = todayCstYmd();
+  const explicitMetaBlocks: string[] = [];
+  const metaBlockRe =
+    /<(?:span|div|p|time|li)\b[^>]*class=['"][^'"]*\b(?:arti_update|arti_time|arti_metas|publish[_-]?time|news_date|time)\b[^'"]*['"][^>]*>[\s\S]{0,200}?<\/(?:span|div|p|time|li)>/gi;
+  let mbm: RegExpExecArray | null;
+  while ((mbm = metaBlockRe.exec(html))) {
+    explicitMetaBlocks.push(mbm[0]);
+  }
+  const metaTextScope = `${metaScope}\n${explicitMetaBlocks.join("\n")}`;
+
+  const dtM = metaTextScope.match(
+    /(?:发布时间|发布日期|发表时间|发表日期|上传时间|更新日期|发布于|日\s*期)[:：\s]*(?:<\/?[^>]*>\s*)*(20\d{2})[-/年.](\d{1,2})[-/月.](\d{1,2})日?\s*(?:(\d{1,2})[:：](\d{2}))?/,
   );
-  const anyM = html.match(/(20\d{2})[-/年.](\d{1,2})[-/月.](\d{1,2})/);
-  const src = dtM ?? anyM;
-  const publishedAt = src
-    ? `${src[1]}-${String(src[2]).padStart(2, "0")}-${String(src[3]).padStart(2, "0")}` +
-      (dtM?.[4] ? `T${String(dtM[4]).padStart(2, "0")}:${dtM[5]}:00` : "")
+  const classDateM = explicitMetaBlocks
+    .join("\n")
+    .match(/(20\d{2})[-/年.](\d{1,2})[-/月.](\d{1,2})日?\s*(?:(\d{1,2})[:：](\d{2}))?/);
+  const anyM = metaScope.match(/(20\d{2})[-/年.](\d{1,2})[-/月.](\d{1,2})/);
+  const src = dtM ?? classDateM ?? anyM;
+  const rawPubYmd = src
+    ? `${src[1]}-${String(src[2]).padStart(2, "0")}-${String(src[3]).padStart(2, "0")}`
     : null;
+  const rawPubClock = (dtM ?? classDateM)?.[4]
+    ? `T${String((dtM ?? classDateM)![4]).padStart(2, "0")}:${(dtM ?? classDateM)![5]}:00`
+    : "";
+  // 拦截落在未来的误解析发布日期
+  const publishedAt =
+    rawPubYmd && rawPubYmd <= todayYmd ? `${rawPubYmd}${rawPubClock}` : null;
 
   const cleanedBody = decodeText(body)
     .replace(/(?<=\d)\s+(?=\d)/g, "")
@@ -764,15 +879,48 @@ export function extractArticle(
     firstTable?.headers.join(" / ").slice(0, 120) ??
     "";
 
-  // 页面标题：h1 优先，但部分模板的 h1 是 &nbsp; 占位，需回退到 <title>
-  const h1Raw = decodeText(html.match(/<h1[^>]*>([\s\S]{0,200}?)<\/h1>/i)?.[1] ?? "");
+  // 页面候选标题：优先专用文章标题 class，其次非导航/非站名的 <h1>，再次清洗后的 <title>
+  const candidateTitles: string[] = [];
+  const seenTitles = new Set<string>();
+  const pushCandidateTitle = (raw: string) => {
+    const clean = decodeText(raw);
+    if (!isGenericHeading(clean) && !seenTitles.has(clean)) {
+      seenTitles.add(clean);
+      candidateTitles.push(clean);
+    }
+  };
+
+  const titleClassRe =
+    /<(?:h[1-3]|div|span|p)\b[^>]*class=['"][^'"]*\b(?:arti_title|article[_-]title|news[_-]title|wp_title|con_title|detail[_-]title)\b[^'"]*['"][^>]*>([\s\S]{0,400}?)<\/(?:h[1-3]|div|span|p)>/gi;
+  let tcm: RegExpExecArray | null;
+  while ((tcm = titleClassRe.exec(html))) {
+    pushCandidateTitle(tcm[1]);
+  }
+
+  const h1Re = /<h1\b[^>]*>([\s\S]{0,300}?)<\/h1>/gi;
+  let hm: RegExpExecArray | null;
+  while ((hm = h1Re.exec(html))) {
+    const inner = hm[1];
+    // 跳过仅包含回首页/主站导航链接的 <h1>（如材料与化学工程学院页头的 <h1><a href="...">学校主页</a></h1>）
+    if (
+      /^\s*<a\b[^>]*href=['"](?:https?:\/\/[^/]+\/?|\/|\/index\.htm[^'"]*|index\.htm[^'"]*)['"][^>]*>[\s\S]*<\/a>\s*$/i.test(
+        inner,
+      )
+    ) {
+      continue;
+    }
+    pushCandidateTitle(inner);
+  }
+
   const titleRaw = decodeText(html.match(/<title[^>]*>([\s\S]{0,300}?)<\/title>/i)?.[1] ?? "");
-  // <title> 常带「_站点名」或「-站点名」后缀，仅当后缀很短（站点名）时才截掉
+  // <title> 常带「_站点名」或「-学院全称」后缀
   const titleClean = titleRaw
-    .replace(/\s*[_|]\s*[^_|]{2,16}$/, "")
-    .replace(/\s+-\s+[^-]{2,16}$/, "")
+    .replace(/\s*[_|｜]\s*[^_|｜]{2,28}$/, "")
+    .replace(/\s+-\s+[^-]{2,28}$/, "")
     .trim();
-  const pageTitle = h1Raw.length >= 4 ? h1Raw : titleClean || null;
+  pushCandidateTitle(titleClean);
+
+  const pageTitle = candidateTitles[0] ?? null;
 
   return {
     paragraphs: paragraphs.slice(0, 16),
@@ -785,6 +933,7 @@ export function extractArticle(
     venue,
     startsAt,
     pageTitle,
+    candidateTitles,
   };
 }
 
