@@ -10,6 +10,9 @@
 #   FRP_DEPLOY=1 + FRP_DEPLOY_SCRIPT=   额外同步一份回滚副本
 #   PAGES_DEPLOY=1 + PAGES_PROJECT=     兜底部署到 Cloudflare Pages
 set -uo pipefail
+# 单实例：定时器与手动/部署触发可能撞车，两个构建同时写 .next 会让 tsc 读到半截文件、报假类型错误
+exec 9>/run/scau-pipeline.lock
+if ! flock -n 9; then echo "[$(date '+%F %T')] 已有流水线在跑，跳过本次"; exit 0; fi
 APP_DIR=${APP_DIR:-$(cd "$(dirname "$0")" && pwd)}
 cd "$APP_DIR" || exit 1
 export PATH=${NODE_BIN_DIR:+$NODE_BIN_DIR:}${PATH:-/usr/local/bin:/usr/bin:/bin}
