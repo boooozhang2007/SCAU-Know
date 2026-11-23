@@ -222,7 +222,7 @@ function patchPagesForStatic(dir, appRoot = dir) {
       } else if (rel === "calendar/page.tsx") {
         content = content.replace(
           /export default async function CalendarPage\([\s\S]*?const \{[^}]+\} = await searchParams;/,
-          'export default async function CalendarPage() {\n  const category: string = "";',
+          'export default async function CalendarPage() {\n  const category: string = "", date: string = "";',
         );
         changed = true;
       }
