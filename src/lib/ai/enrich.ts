@@ -166,6 +166,9 @@ async function callAiJson(
         { role: "user", content: userPrompt },
       ],
     };
+    if (process.env.AI_DISABLE_THINKING === "1") {
+      body.chat_template_kwargs = { thinking: false };
+    }
     if (cfg.useJsonMode) {
       body.response_format = { type: "json_object" };
     }

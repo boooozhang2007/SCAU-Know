@@ -122,6 +122,15 @@ export function normalizeUrl(raw: string): string {
     if (u.hostname === "mp.weixin.qq.com" && u.protocol === "http:") {
       u.protocol = "https:";
     }
+    // 微信读书侧返回的公众号短链把 base64url 的 `_` 写成了 `~`，
+    // 直接访问会返回「参数错误」；这里统一还原成 `_`。
+    if (
+      u.hostname === "mp.weixin.qq.com" &&
+      u.pathname.startsWith("/s/") &&
+      u.pathname.includes("~")
+    ) {
+      u.pathname = u.pathname.replace(/~/g, "_");
+    }
     if (u.hostname !== "mp.weixin.qq.com") {
       u.hash = "";
     }

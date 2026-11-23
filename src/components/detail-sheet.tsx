@@ -47,6 +47,17 @@ function formatBytes(bytes?: number): string {
 
 const ATT_ARCHIVE_EXTS = new Set(["zip", "rar", "7z"]);
 const ATT_PPT_EXTS = new Set(["ppt", "pptx", "pptm", "ppsx", "dps", "odp"]);
+
+/** 把抓取/解析的原始错误翻成人话，避免页面上出现 "fetch failed" 这类字样 */
+function describeAttachmentError(err: string, en: boolean): string {
+  if (/^HTTP 404/.test(err)) return en ? "original file removed (404)" : "原文件已失效（404）";
+  if (/附件过大/.test(err)) return en ? "file too large — download from source" : "文件过大，请到原站下载";
+  if (/^HTTP 4\d\d/.test(err)) return en ? `source rejected (${err})` : `源站拒绝访问（${err}）`;
+  if (/aborted|timeout|ECONN|ENOTFOUND|fetch failed|proxy|socket/i.test(err)) {
+    return en ? "source unreachable — open on campus network" : "源站不可达，需校园网/VPN 打开";
+  }
+  return en ? `parse hint: ${err}` : `解析提示：${err}`;
+}
 const ATT_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp"]);
 
 /** 单个附件预览（支持 Excel 表格、Word/WPS/RTF/PDF/PPT/OFD/压缩包文本、图片附件预览及下载） */
@@ -104,7 +115,7 @@ function AttachmentCard({
               ? ` · ${att.sheets.length} 个工作表 (${att.sheets.reduce((s, sh) => s + sh.totalRows, 0)} 行)`
               : ""}
             {att.needsOcr ? " · 扫描件 PDF（文字较少）" : ""}
-            {att.error ? ` · 下载/解析提示：${att.error}` : ""}
+            {att.error ? ` · ${describeAttachmentError(att.error, en)}` : ""}
           </span>
         </div>
 

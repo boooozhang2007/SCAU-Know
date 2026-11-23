@@ -8,6 +8,10 @@ data/schedule.json
 data/reports/
 data/inbox/
 data/attachments/
+data/attachment-remote.json
+data/r2-state.json
+data/pipeline.log
+data/ai-rerun.log
 data/alert-rules.json
 data/alert-logs.json
 data/ai-config.json
@@ -16,6 +20,7 @@ public/static-data/
 *.log
 .env
 .env*.local
-tsconfig.tsbuildinfo
-.DS_Store
+tsconfig.tsbuildinfo.DS_Store
 Thumbs.db
+*.bak
+*.bak-*

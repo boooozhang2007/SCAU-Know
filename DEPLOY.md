@@ -90,3 +90,43 @@ wrangler pages deploy out --project-name=scau-know
 ```
 
 如果使用 GitHub Actions 构建部署，也可在 `/admin` 触发「导出静态快照」或配置 `CF_PAGES_DEPLOY_HOOK` / `VERCEL_DEPLOY_HOOK` 环境变量自动拉起远端重建。
+
+---
+
+## 三、定时流水线（采集 → 构建 → 增量发布）
+
+生产端把这个仓库放在一台能访问校内站点的机器上，用 systemd timer 每半小时跑一次 `pipeline.sh`：
+
+```
+pipeline.sh
+├─ run-full.mts                    抓取 48 个校内站 + we-mp-rss 公众号
+├─ scripts/ingest-remote-attachments.mjs   解析「只有 IPv6 能到」的站点由外部出口机代取回来的附件（零网络）
+├─ scripts/build-static.mjs        产出 out/（HTML + WebP 缩略图 + 分片 details JSON）
+├─ r2_deploy.py                    按 md5 增量把 out/ 同步到 S3 兼容对象存储（默认 Cloudflare R2）
+└─ ${CF_PURGE_SCRIPT}              清一次页面缓存，让新内容立即生效
+```
+
+数据没变化（`data/notices.json` md5 相同）时只跑抓取就退出，不重建、不上传。
+
+全部路径都可用环境变量覆盖，默认值只假设「脚本放在项目根目录」，见 `.env.example` 的「静态发布」段：
+
+| 变量 | 作用 |
+| --- | --- |
+| `APP_DIR` | 项目目录（默认脚本所在目录） |
+| `NODE_BIN_DIR` | node/tsx 所在 bin 目录 |
+| `PIPELINE_LOG` | 流水线日志，默认 `$APP_DIR/data/pipeline.log` |
+| `R2_BUCKET` / `R2_OUT` / `R2_CRED` / `R2_STATE` | 目标桶与增量状态；凭据 `{endpoint,access_key,secret_key[,bucket]}` |
+| `CF_PURGE_SCRIPT` | 部署后清 Cloudflare 缓存的脚本，留空则跳过 |
+| `FRP_DEPLOY=1` + `FRP_DEPLOY_SCRIPT` | 额外同步一份回滚副本 |
+| `PAGES_DEPLOY=1` + `PAGES_PROJECT` | 兜底部署到 Cloudflare Pages |
+
+### 对象存储的两个坑
+
+1. **自定义域没有 index 文档**：每个含 `index.html` 的目录要额外放一条 key 为 `<dir>/` 的对象（`Content-Type` 显式 `text/html`）；根路径 `/` 用一条边缘重写规则补成 `/index.html`。
+2. **无尾斜杠的路径会 404**：`trailingSlash: true` 的产物只有 `calendar/`，访问 `/calendar` 要在边缘把路径补成 `calendar/`（Transform Rule 里必须写 `expression` 动态拼路径，写死 `value` 会报错）。
+
+缓存头：`_next/static/*` 与 `media/*` 一年 immutable，其余页面 `max-age=60, s-maxage=900, stale-while-revalidate=86400`（由 `r2_deploy.py` 写入，`public/_headers` 同步配置边缘规则）。
+
+### 附件抓取
+
+部分校内附件站（如 `webplus.scau.edu.cn`）只走 IPv6，机房直连必然超时。做法是让 `attachment` 抓取直接失败并把 URL 落到 `data/attachment-remote.json`，由一台有 IPv6 的出口机代取后回传，本地只做解析写回，不在生产机上跑任何隧道/代理。

@@ -1076,32 +1076,59 @@ interface DownloadedFile {
   contentType?: string;
 }
 
+/**
+ * 广州机不允许跑代理/隧道（腾讯云 AUP），因此「只有 IPv6 能到」的校内主机
+ * （webplus.scau.edu.cn 等）一律立刻失败并留给 远端出口机代取：
+ * 远端出口机的定时任务脚本 定时把 notices.json 里带 error 的附件抓下来、
+ * 回写到 data/attachment-remote.json，本地由 scripts/ingest-remote-attachments.mjs 解析入库。
+ */
+const REMOTE_ONLY_HOSTS = new Set(
+  (process.env.ATTACHMENT_REMOTE_HOSTS || "webplus.scau.edu.cn")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+function validateDownloaded(buf: Buffer, contentType: string | undefined, url: string): void {
+  if (buf.byteLength === 0) throw new Error("空文件");
+  if (buf.byteLength > MAX_FILE_BYTES) throw new Error("附件超过 20MB 上限");
+  const ct = (contentType ?? "").toLowerCase();
+  // 只有返回真实网页错误页才拒收；含 Office 命名空间的伪装 `.doc` 放行并解析
+  if (ct.includes("text/html") && !/\.html?$/i.test(url)) {
+    const head = buf.subarray(0, 600).toString("latin1");
+    const isWordHtml = /urn:schemas-microsoft-com:office:(?:word|office)|ProgId=Word\.Document/i.test(head);
+    if (!isWordHtml) throw new Error("返回 HTML 错误页而非附件文件");
+  }
+}
+
 async function downloadFile(url: string, referer?: string): Promise<DownloadedFile> {
+  const headers: Record<string, string> = { "User-Agent": UA, Accept: "*/*" };
+  if (referer) headers.Referer = referer;
+
+  const host = (() => {
+    try {
+      return new URL(url).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+
+  // 只有 IPv6 能到的校内主机：本地直连必然超时，立刻交给 远端出口机代取
+  if (REMOTE_ONLY_HOSTS.has(host)) {
+    throw new Error("需 IPv6 出口，已转云端代取");
+  }
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const headers: Record<string, string> = { "User-Agent": UA, Accept: "*/*" };
-    if (referer) headers.Referer = referer;
     const res = await fetch(url, { headers, signal: ctrl.signal, redirect: "follow" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const ct = (res.headers.get("content-type") ?? "").toLowerCase();
     const len = Number(res.headers.get("content-length") ?? "0");
     if (len > MAX_FILE_BYTES) throw new Error(`附件过大 (${Math.round(len / 1048576)}MB)`);
     const arr = await res.arrayBuffer();
-    if (arr.byteLength === 0) throw new Error("空文件");
-    if (arr.byteLength > MAX_FILE_BYTES) throw new Error("附件超过 20MB 上限");
-
     const buf = Buffer.from(arr);
-    // 只有返回真实网页错误页才拒收；含 Office 命名空间的伪装 `.doc` 放行并解析
-    if (ct.includes("text/html") && !/\.html?$/i.test(url)) {
-      const head = buf.subarray(0, 600).toString("latin1");
-      const isWordHtml =
-        /urn:schemas-microsoft-com:office:(?:word|office)|ProgId=Word\.Document/i.test(head);
-      if (!isWordHtml) {
-        throw new Error("返回 HTML 错误页而非附件文件");
-      }
-    }
-
+    validateDownloaded(buf, ct, url);
     return {
       buf,
       contentDisposition: res.headers.get("content-disposition") ?? undefined,
@@ -1138,6 +1165,30 @@ export async function parseAttachmentFile(
   };
 }
 
+/**
+ * 复用上一轮已解析好的附件：notices.json 里同一 url 且本地文件还在，就不再联网下载。
+ * 这样 远端出口机代取回来的附件不会被下一轮 crawl 覆盖掉，也省掉重复下载。
+ */
+let previousByUrl: Map<string, NoticeAttachment> | null = null;
+
+async function loadPreviousAttachments(): Promise<Map<string, NoticeAttachment>> {
+  if (previousByUrl) return previousByUrl;
+  const map = new Map<string, NoticeAttachment>();
+  previousByUrl = map;
+  try {
+    const raw = await fs.readFile(path.join(process.cwd(), "data", "notices.json"), "utf8");
+    const notices = JSON.parse(raw) as { attachments?: NoticeAttachment[] }[];
+    for (const n of notices) {
+      for (const a of n.attachments || []) {
+        if (a?.url && a.localPath && !a.error) map.set(a.url, a);
+      }
+    }
+  } catch {
+    /* 首次运行或文件缺失，忽略 */
+  }
+  return map;
+}
+
 export async function downloadAndParseAttachments(
   items: { name: string; url: string; embedded?: boolean }[],
   referer?: string,
@@ -1145,9 +1196,32 @@ export async function downloadAndParseAttachments(
   const results: NoticeAttachment[] = [];
   await fs.mkdir(ATTACHMENTS_DIR, { recursive: true });
 
+  const cached = await loadPreviousAttachments();
+
   for (const item of items.slice(0, MAX_FILES_PER_NOTICE)) {
     const preMeta = await resolveAttachmentMeta(item.name, item.url);
     const id = createHash("sha256").update(item.url).digest("hex").slice(0, 12);
+
+    const hit = cached.get(item.url);
+    if (hit?.localPath) {
+      try {
+        await fs.access(hit.localPath);
+        const parsed = await parseAttachmentFile(hit.localPath, item.name, item.url);
+        results.push({
+          ...hit,
+          name: parsed.safeName,
+          ext: parsed.ext,
+          size: parsed.size,
+          ...(parsed.sheets?.length ? { sheets: parsed.sheets } : {}),
+          ...(parsed.parsedText ? { parsedText: parsed.parsedText } : {}),
+          ...(parsed.archiveFiles?.length ? { archiveFiles: parsed.archiveFiles } : {}),
+          ...(parsed.needsOcr ? { needsOcr: true } : {}),
+        });
+        continue;
+      } catch {
+        /* 文件不在了就走下载 */
+      }
+    }
 
     try {
       const dl = await downloadFile(item.url, referer);
