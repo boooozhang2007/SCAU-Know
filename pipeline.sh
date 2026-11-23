@@ -12,14 +12,14 @@
 set -uo pipefail
 APP_DIR=${APP_DIR:-$(cd "$(dirname "$0")" && pwd)}
 cd "$APP_DIR" || exit 1
-export PATH=${NODE_BIN_DIR:+$NODE_BIN_DIR:}/usr/local/bin:/usr/bin:/bin
+export PATH=${NODE_BIN_DIR:+$NODE_BIN_DIR:}${PATH:-/usr/local/bin:/usr/bin:/bin}
 LOG=${PIPELINE_LOG:-$APP_DIR/data/pipeline.log}
 mkdir -p "$(dirname "$LOG")"
 log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 BEFORE=$(md5sum data/notices.json 2>/dev/null | cut -d' ' -f1)
 
-./node_modules/.bin/tsx --tsconfig tsconfig.json run-full.mts >>"$LOG" 2>&1
+./node_modules/.bin/tsx --tsconfig tsconfig.json scripts/crawl.mjs --limit 10 --concurrency 2 >>"$LOG" 2>&1
 RC=$?
 if [ $RC -ne 0 ]; then log "crawl 退出码 $RC，终止"; exit $RC; fi
 
