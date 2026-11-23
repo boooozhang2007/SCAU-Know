@@ -43,6 +43,8 @@ export interface CrawledNotice {
   attachments?: NoticeAttachment[];
   ai?: NoticeAiMeta;
   isNew: boolean;
+  /** 首次入库时间（ISO）：官网条目只有日期没有时分，用它做同日排序的位置依据 */
+  firstSeen?: string;
   fetchedAt: string;
   requiresAuth?: boolean;
 }
@@ -266,6 +268,8 @@ export interface RunCrawlOptions {
   seen?: Set<string>;
   /** 已经抓过正文的规范化 key，命中则只取列表信息、不再请求详情页 */
   knownDetails?: Set<string>;
+  /** 忽略 knownDetails，把本轮列表项全部重抓详情（每日一次的深度刷新） */
+  forceDetail?: boolean;
   /** 进度回调 */
   onProgress?: (report: SourceReport, index: number, total: number) => void;
 }
@@ -496,7 +500,8 @@ export async function crawlSource(
 
     // 详情抓取（限并发 4），完成校验、图片镜像、附件解析与内嵌 PDF 提升；
     // 已经抓过正文的条目直接复用列表信息，避免每轮把同一批详情页重抓一遍。
-    const needDetail = (url: string) => !opts.knownDetails?.has(canonicalNoticeKey(normalizeUrl(url)));
+    const needDetail = (url: string) =>
+      opts.forceDetail || !opts.knownDetails?.has(canonicalNoticeKey(normalizeUrl(url)));
     const details = fetchDetail
       ? await mapLimit(picked, 4, async (item) =>
           needDetail(item.url)
@@ -575,6 +580,7 @@ export async function crawlSource(
         blocks: detail.blocks,
         attachments: detail.attachments,
         isNew: isToday(iso),
+        firstSeen: new Date().toISOString(),
         fetchedAt: new Date().toISOString(),
         ...(detail.requiresAuth ? { requiresAuth: true } : {}),
       });

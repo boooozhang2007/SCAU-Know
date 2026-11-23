@@ -265,6 +265,7 @@ function toNotice(n: CrawledNotice, now: Date): Notice {
     ai: mergedAi,
     url: n.url,
     isNew: isToday(publishedAt, now),
+    ...(n.firstSeen ? { firstSeen: n.firstSeen } : {}),
     requiresAuth: n.requiresAuth || undefined,
   };
 }
@@ -327,6 +328,7 @@ export function toNoticeSummary(n: Notice): Notice {
     url: n.url,
     ...(n.cover ? { cover: n.cover } : {}),
     ...(n.isNew ? { isNew: true } : {}),
+    ...(n.firstSeen ? { firstSeen: n.firstSeen } : {}),
     ...(n.requiresAuth ? { requiresAuth: true } : {}),
   };
 }
@@ -455,6 +457,7 @@ async function getCachedBundle(now: Date): Promise<NoticesMemoryCache> {
         actionSummary: rule.actionSummary,
         subject: n.subject ?? inferSubject(n.source, n.title),
         isNew: isToday(publishedAt, now),
+        ...(n.firstSeen ? { firstSeen: n.firstSeen } : {}),
       };
     }),
   );

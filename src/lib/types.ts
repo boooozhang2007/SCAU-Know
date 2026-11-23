@@ -137,6 +137,8 @@ export interface Notice {
   cover?: string;
   /** 是否今日新收录 */
   isNew?: boolean;
+  /** 首次入库时间（ISO）。官网条目只有日期没有时分，同日排序用它定位真实先后 */
+  firstSeen?: string;
   /** 是否需要校内 CAS 统一身份认证登录后查看 */
   requiresAuth?: boolean;
 }

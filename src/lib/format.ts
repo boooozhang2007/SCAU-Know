@@ -454,11 +454,24 @@ export function formatWeekRange(mondayKey: string, lang: "zh" | "en" = "zh"): st
   return `${a.date} — ${b.date}`;
 }
 
-/** 按发布时间倒序（单次预解析规范化时间戳 + 确定性兜底排序，避免 NaN 或同时间戳抖动） */
+/** 按发布时间倒序（单次预解析规范化时间戳 + 确定性兜底排序，避免 NaN 或同时间戳抖动）
+ *
+ * 官网条目只有日期没有时分（`publishedAt` 全为当天 00:00），只靠日期排序时
+ * 同日几十条会按 id 字母序乱插，且公众号带时分的最新几条会把它们压到当天末尾。
+ * 所以同日用 `firstSeen`（首次入库时间）倒序兜底——后抓到的排在前面，接近真实发布顺序。
+ */
 export function sortByPublished(list: Notice[]): Notice[] {
   return list
-    .map((n) => ({ n, ts: safeParseTimestamp(n.publishedAt) }))
-    .sort((a, b) => (b.ts !== a.ts ? b.ts - a.ts : b.n.id.localeCompare(a.n.id)))
+    .map((n) => ({
+      n,
+      ts: safeParseTimestamp(n.publishedAt),
+      seen: n.firstSeen ? safeParseTimestamp(n.firstSeen) : 0,
+    }))
+    .sort((a, b) => {
+      if (b.ts !== a.ts) return b.ts - a.ts;
+      if (b.seen !== a.seen) return b.seen - a.seen;
+      return b.n.id.localeCompare(a.n.id);
+    })
     .map((x) => x.n);
 }
 

@@ -143,6 +143,7 @@ function mergeRecord(prev: CrawledNotice | undefined, next: CrawledNotice): Craw
     registration: next.registration || prev.registration,
     requiresAuth: next.requiresAuth ?? prev.requiresAuth,
     fetchedAt: next.fetchedAt || prev.fetchedAt,
+    firstSeen: prev.firstSeen || next.firstSeen,
   };
 }
 
