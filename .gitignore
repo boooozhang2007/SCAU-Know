@@ -20,7 +20,8 @@ public/static-data/
 *.log
 .env
 .env*.local
-tsconfig.tsbuildinfo.DS_Store
+tsconfig.tsbuildinfo
+.DS_Store
 Thumbs.db
 *.bak
 *.bak-*

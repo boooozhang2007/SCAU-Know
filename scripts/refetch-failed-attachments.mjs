@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * 重抓「下载失败」的附件（error 字段存在）。
- * 直连失败时 attachments.ts 会自动经由 IPv6 出口机代理重试
- * （ATTACHMENT_PROXY_URL，默认 http://127.0.0.1:13128）。
+ * 只走本机直连：命中 ATTACHMENT_REMOTE_HOSTS 的站点会立刻失败并留在队列里，
+ * 由外部出口机代取后交给 scripts/ingest-remote-attachments.mjs 回填。
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
