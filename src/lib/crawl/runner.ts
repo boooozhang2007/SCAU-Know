@@ -3,7 +3,7 @@
  */
 
 import { CRAWL_SOURCES, enabledSources, type CrawlSource } from "./sources";
-import { runCrawl, type CrawlReport, type CrawledNotice } from "./engine";
+import { canonicalNoticeKey, runCrawl, type CrawlReport, type CrawledNotice } from "./engine";
 import { wechatMode, crawlWechatRss, crawlWechatWemp } from "./wechat";
 import { mergeNotices, readNotices, writeNotices, readState, writeState, saveReport } from "./store";
 import { enrichNotice } from "@/lib/ai/enrich";
@@ -41,6 +41,10 @@ export interface RunResult {
   notify: { evaluated: number; triggered: number; delivered: number };
 }
 
+function canonicalKeyOf(url: string): string {
+  return canonicalNoticeKey(url);
+}
+
 function selectSources(only?: string[]): CrawlSource[] {
   const all = enabledSources();
   if (!only?.length) return all;
@@ -66,6 +70,14 @@ export async function runFullCrawl(opts: RunOptions = {}): Promise<RunResult> {
 
   if (sources.length > 0 && opts.only?.[0] !== "__wechat_only__") {
     log(`开始抓取 ${sources.length} 个站点`);
+    // 已有正文的条目不必每轮重抓详情页：把它作为 knownDetails 传下去，只拉新条目的详情。
+    const existingNotices = await readNotices();
+    const knownDetails = new Set(
+      existingNotices
+        .filter((n) => (n.paragraphs?.length ?? 0) > 0 || (n.attachments?.length ?? 0) > 0)
+        .map((n) => canonicalKeyOf(n.url)),
+    );
+    log(`已知正文 ${knownDetails.size} 条，本轮只抓新条目详情`);
     const siteRes = await runCrawl({
       sources,
       limitPerSource: opts.limitPerSource ?? 20,
@@ -73,6 +85,7 @@ export async function runFullCrawl(opts: RunOptions = {}): Promise<RunResult> {
       parseAttachments: opts.parseAttachments ?? opts.fetchDetail ?? true,
       mirrorImages: opts.mirrorImages ?? opts.fetchDetail ?? true,
       concurrency: opts.concurrency ?? 3,
+      knownDetails,
       onProgress: (r, i, total) => {
         log(
           `[${i + 1}/${total}] ${r.name} — ${r.ok ? `${r.listed} 条列表 / ${r.added} 条入库` : `失败：${r.error}`} (${r.durationMs}ms)`,

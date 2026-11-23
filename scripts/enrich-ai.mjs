@@ -21,6 +21,8 @@ async function main() {
   loadEnvLocal();
   const limitArg = process.argv.indexOf("--limit");
   const limit = limitArg >= 0 ? Number(process.argv[limitArg + 1] || 50) : 50;
+  const concArg = process.argv.indexOf("--concurrency");
+  const concurrency = Math.max(1, concArg >= 0 ? Number(process.argv[concArg + 1] || 4) : 4);
   const { readNotices, writeNotices } = await import(
     pathToFileURL(path.join(process.cwd(), "src", "lib", "crawl", "store.ts")).href
   );
@@ -29,12 +31,18 @@ async function main() {
   );
 
   const list = await readNotices();
+  const pending = list.filter((n) => !n.ai).slice(0, limit);
   let updated = 0;
-  for (const n of list) {
-    if (updated >= limit) break;
-    if (n.ai) continue;
-    n.ai = await enrichNotice(n);
-    updated++;
+  // 并发 4 路：每条都是一次长等待的网络调用，串行会把一批 25 条拖到 5–8 分钟
+  for (let i = 0; i < pending.length; i += concurrency) {
+    const chunk = pending.slice(i, i + concurrency);
+    const metas = await Promise.all(chunk.map((n) => enrichNotice(n).catch(() => null)));
+    chunk.forEach((n, j) => {
+      const meta = metas[j];
+      if (!meta) return;
+      n.ai = meta;
+      updated++;
+    });
   }
   if (updated > 0) await writeNotices(list);
   console.log(

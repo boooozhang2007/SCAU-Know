@@ -264,6 +264,8 @@ export interface RunCrawlOptions {
   concurrency?: number;
   /** 已见 URL，用于增量 */
   seen?: Set<string>;
+  /** 已经抓过正文的规范化 key，命中则只取列表信息、不再请求详情页 */
+  knownDetails?: Set<string>;
   /** 进度回调 */
   onProgress?: (report: SourceReport, index: number, total: number) => void;
 }
@@ -492,16 +494,29 @@ export async function crawlSource(
 
     const picked = items.slice(0, limit);
 
-    // 详情抓取（限并发 4），完成校验、图片镜像、附件解析与内嵌 PDF 提升
+    // 详情抓取（限并发 4），完成校验、图片镜像、附件解析与内嵌 PDF 提升；
+    // 已经抓过正文的条目直接复用列表信息，避免每轮把同一批详情页重抓一遍。
+    const needDetail = (url: string) => !opts.knownDetails?.has(canonicalNoticeKey(normalizeUrl(url)));
     const details = fetchDetail
       ? await mapLimit(picked, 4, async (item) =>
-          hydrateNoticeDetail(normalizeUrl(item.url), item.title, {
-            mirrorImages,
-            parseAttachments,
-            fallbackYear:
-              Number((item.date ?? dateFromUrl(item.url) ?? "").slice(0, 4)) ||
-              new Date().getFullYear(),
-          }),
+          needDetail(item.url)
+            ? hydrateNoticeDetail(normalizeUrl(item.url), item.title, {
+                mirrorImages,
+                parseAttachments,
+                fallbackYear:
+                  Number((item.date ?? dateFromUrl(item.url) ?? "").slice(0, 4)) ||
+                  new Date().getFullYear(),
+              })
+            : ({
+                ok: true,
+                requiresAuth: false,
+                publishedAt: null,
+                startsAt: null,
+                venue: null,
+                registration: /报名|申请|预约|征集|招募/.test(item.title),
+                summary: item.title,
+                paragraphs: [],
+              } as HydratedNoticeDetail),
         )
       : picked.map(
           (item): HydratedNoticeDetail => ({

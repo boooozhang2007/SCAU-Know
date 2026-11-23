@@ -20,7 +20,7 @@ LOG=${PIPELINE_LOG:-$APP_DIR/data/pipeline.log}
 mkdir -p "$(dirname "$LOG")"
 log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
-BEFORE=$(md5sum data/notices.json 2>/dev/null | cut -d' ' -f1)
+BEFORE=$(python3 scripts/content-hash.py data/notices.json)
 
 ./node_modules/.bin/tsx --tsconfig tsconfig.json scripts/crawl.mjs --limit 10 --concurrency 2 >>"$LOG" 2>&1
 RC=$?
@@ -29,9 +29,9 @@ if [ $RC -ne 0 ]; then log "crawl 退出码 $RC，终止"; exit $RC; fi
 # 只有 IPv6 能到的站点由远端出口机代取，队列文件在这里解析入库；零网络
 ./node_modules/.bin/tsx --tsconfig tsconfig.json scripts/ingest-remote-attachments.mjs >>"$LOG" 2>&1 || log "远端附件回填失败（忽略，继续）"
 
-AFTER=$(md5sum data/notices.json 2>/dev/null | cut -d' ' -f1)
+AFTER=$(python3 scripts/content-hash.py data/notices.json)
 if [ "$BEFORE" = "$AFTER" ]; then
-  log "数据无变化，跳过构建与部署"
+  log "内容无变化（仅时间戳刷新），跳过构建与部署"
   exit 0
 fi
 
