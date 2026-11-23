@@ -29,7 +29,7 @@ PROJECT = os.environ.get("APP_DIR") or os.path.dirname(os.path.abspath(__file__)
 OUT = os.environ.get("R2_OUT") or os.path.join(PROJECT, "out")
 CRED = os.environ.get("R2_CRED") or os.path.join(PROJECT, ".r2.json")
 STATE = os.environ.get("R2_STATE") or os.path.join(PROJECT, "data", "r2-state.json")
-DEFAULT_BUCKET = "scau-know"
+DEFAULT_BUCKET = ""
 
 EXTRA = {
     '.webmanifest': 'application/manifest+json',
@@ -91,6 +91,8 @@ def main():
     import boto3
     c = json.load(open(CRED))
     bucket = os.environ.get('R2_BUCKET') or c.get('bucket') or DEFAULT_BUCKET
+    if not bucket:
+        sys.exit('缺少目标桶：请设 R2_BUCKET，或在 R2_CRED 指向的 JSON 里加 "bucket" 字段')
     kw = {'aws_access_key_id': c['access_key'], 'aws_secret_access_key': c['secret_key']}
     s3 = boto3.client('s3', endpoint_url=c['endpoint'], region_name='auto', **kw)
 
